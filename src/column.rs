@@ -86,21 +86,17 @@ impl Column {
         &self.name
     }
 
-    pub fn escape_val<V>(&self, val: &V) -> Result<String, Error<V>>
-    where
-        V: Any + Clone,
-    {
+    pub fn escape_val(&self, val: &dyn Any) -> Result<String, Error> {
+        // TODO: include value into Error
         if self.nullable {
             self.db_type
                 .escape_nullable_val(val)
                 .ok_or_else(|| Error::BadValueForNullable {
-                    value: Box::new(val.clone()),
                     column_name: self.name().into(),
                     column_type: self.db_type(),
                 })
         } else {
             self.db_type.escape_val(val).ok_or_else(|| Error::BadValue {
-                value: Box::new(val.clone()),
                 column_name: self.name().into(),
                 column_type: self.db_type(),
             })
@@ -109,49 +105,45 @@ impl Column {
 }
 
 #[derive(Debug)]
-pub enum Error<V: ?Sized> {
+pub enum Error {
     BadValue {
-        value: Box<V>,
         column_name: String,
         column_type: DbType,
     },
     BadValueForNullable {
-        value: Box<V>,
         column_name: String,
         column_type: DbType,
     },
 }
 
-impl<V: Display> Display for Error<V> {
+impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BadValue {
-                value,
                 column_name,
                 column_type,
             } => {
                 write!(
                     f,
-                    "The value '{}' cannot be inserted into column '{}' of type '{} NOT NULL'",
-                    value, column_name, column_type
+                    "The value cannot be inserted into column '{}' of type '{} NOT NULL'",
+                    column_name, column_type
                 )
             }
             Self::BadValueForNullable {
-                value,
                 column_name,
                 column_type,
             } => {
                 write!(
                     f,
-                    "The value '{}' cannot be inserted into column '{}' of type '{}'",
-                    value, column_name, column_type
+                    "The value cannot be inserted into column '{}' of type '{}'",
+                    column_name, column_type
                 )
             }
         }
     }
 }
 
-impl<V: Debug + Display> std::error::Error for Error<V> {}
+impl std::error::Error for Error {}
 
 #[allow(dead_code)]
 impl Column {

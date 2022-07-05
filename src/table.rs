@@ -1,11 +1,10 @@
-use std::fmt::Write as _;
+use std::{any::Any as SqlValue, fmt::Write as _};
 
 use itertools::Itertools as _;
 
 use crate::{
     column::{self, Column},
     constraint::CheckConstraint,
-    value::SqlValue,
 };
 
 pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
@@ -30,9 +29,13 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
         format!("CREATE TABLE IF NOT EXISTS {} ({});", Self::name(), sql)
     }
 
+    // TODO: use `dyn crate::value::SqlValue` instead
+    //  the main stop point here is the trait upcasting coercion,
+    //  the cast `dyn SqlValue -> dyn Any` cannot be performed for now.
+    //  See the <https://github.com/rust-lang/rust/issues/65991> for details.
     fn values(&self) -> [Box<dyn SqlValue>; N];
 
-    fn insert_sql(&self) -> Result<String, column::Error<Box<dyn SqlValue>>> {
+    fn insert_sql(&self) -> Result<String, column::Error> {
         let columns = Self::columns();
         let columns_names = columns.iter().map(|c| c.name()).join(",");
 
