@@ -1,0 +1,9 @@
+[package]
+name = "pg-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Help to build PostgreSQL communication without complex ORM"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
