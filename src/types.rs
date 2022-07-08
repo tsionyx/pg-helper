@@ -5,16 +5,12 @@ use std::{any::Any, fmt};
 
 use itertools::Itertools as _;
 
-pub trait Displayable: Any + fmt::Display {}
-
-impl<T: Any + fmt::Display> Displayable for T {}
-
 pub struct CommaSeparatedValues {
-    values: Vec<Box<dyn Displayable>>,
+    values: Vec<(DbType, Box<dyn Any>)>,
 }
 
 impl CommaSeparatedValues {
-    pub fn with_values(values: Vec<Box<dyn Displayable>>) -> Self {
+    pub fn with_values(values: Vec<(DbType, Box<dyn Any>)>) -> Self {
         Self { values }
     }
 }
@@ -22,11 +18,12 @@ impl CommaSeparatedValues {
 impl fmt::Display for CommaSeparatedValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut has_items = false;
-        for val in &self.values {
+        for (db_type, val) in &self.values {
+            let value = db_type.escape_val(val.as_ref()).ok_or(fmt::Error)?;
             if has_items {
-                write!(f, ", {}", val)?;
+                write!(f, ", {}", value)?;
             } else {
-                write!(f, "{}", val)?;
+                write!(f, "{}", value)?;
             }
 
             has_items = true;
@@ -40,8 +37,32 @@ pub trait StructType: fmt::Debug {
     fn name(&self) -> String;
     fn fields(&self) -> Vec<(String, DbType)>;
 
-    fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues>;
-    fn nullable_csv(&self, val: &dyn Any) -> Option<Option<CommaSeparatedValues>>;
+    fn as_vec(&self, val: &dyn Any) -> Option<Vec<Box<dyn Any>>>;
+    fn as_nullable_vec(&self, val: &dyn Any) -> Option<Option<Vec<Box<dyn Any>>>>;
+
+    fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues> {
+        let values = self.as_vec(val)?;
+        let values_with_fields = self
+            .fields()
+            .into_iter()
+            .map(|(_, ty)| ty)
+            .zip(values)
+            .collect();
+        Some(CommaSeparatedValues::with_values(values_with_fields))
+    }
+
+    fn nullable_csv(&self, val: &dyn Any) -> Option<Option<CommaSeparatedValues>> {
+        let values = self.as_nullable_vec(val)?;
+        Some(values.map(|values| {
+            let values_with_fields = self
+                .fields()
+                .into_iter()
+                .map(|(_, ty)| ty)
+                .zip(values)
+                .collect();
+            CommaSeparatedValues::with_values(values_with_fields)
+        }))
+    }
 }
 
 #[derive(Debug)]

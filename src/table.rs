@@ -265,10 +265,7 @@ mod tests {
 #[cfg(test)]
 mod tests_custom {
     use super::*;
-    use crate::{
-        types::{CommaSeparatedValues, Displayable, StructType},
-        ColumnBuilder, DbType,
-    };
+    use crate::{types::StructType, ColumnBuilder, DbType};
 
     #[derive(Debug, Copy, Clone)]
     struct PointType;
@@ -296,15 +293,17 @@ mod tests_custom {
             vec![("x".into(), DbType::Int16), ("y".into(), DbType::Int16)]
         }
 
-        fn csv(&self, val: &dyn SqlValue) -> Option<CommaSeparatedValues> {
+        fn as_vec(&self, val: &dyn SqlValue) -> Option<Vec<Box<dyn std::any::Any>>> {
             let (x, y) = val.downcast_ref::<(i16, i16)>()?;
-            let values: Vec<Box<dyn Displayable>> = vec![Box::new(*x), Box::new(*y)];
-            Some(CommaSeparatedValues::with_values(values))
+            Some(vec![Box::new(*x), Box::new(*y)])
         }
 
-        fn nullable_csv(&self, val: &dyn SqlValue) -> Option<Option<CommaSeparatedValues>> {
+        fn as_nullable_vec(
+            &self,
+            val: &dyn SqlValue,
+        ) -> Option<Option<Vec<Box<dyn std::any::Any>>>> {
             let value = val.downcast_ref::<Option<(i16, i16)>>()?;
-            Some(value.and_then(|val| self.csv(&val)))
+            Some(value.and_then(|val| self.as_vec(&val)))
         }
     }
 
@@ -456,6 +455,121 @@ mod tests_custom {
                 images[1].point_bottom_right.y,
                 images[1].center.unwrap().x,
                 images[1].center.unwrap().y
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_heterogeneous {
+    use super::*;
+    use crate::{types::StructType, ColumnBuilder, DbType};
+
+    #[derive(Debug, Copy, Clone)]
+    struct IntWithLabelType;
+
+    // TODO: combine those types together
+
+    #[derive(Debug)]
+    struct IntWithLabel {
+        val: i16,
+        label: String,
+    }
+
+    impl IntWithLabel {
+        fn clone_tuple(&self) -> (i16, String) {
+            (self.val, self.label.clone())
+        }
+    }
+
+    impl StructType for IntWithLabelType {
+        fn name(&self) -> String {
+            "with_label".into()
+        }
+
+        fn fields(&self) -> Vec<(String, DbType)> {
+            vec![
+                ("val".into(), DbType::Int16),
+                ("label".into(), DbType::VarChar(None)),
+            ]
+        }
+
+        fn as_vec(&self, val: &dyn SqlValue) -> Option<Vec<Box<dyn std::any::Any>>> {
+            let (v, l) = val.downcast_ref::<(i16, String)>()?;
+            Some(vec![Box::new(*v), Box::new(l.clone())])
+        }
+
+        fn as_nullable_vec(
+            &self,
+            val: &dyn SqlValue,
+        ) -> Option<Option<Vec<Box<dyn std::any::Any>>>> {
+            let value = val.downcast_ref::<Option<(i16, String)>>()?;
+            Some(value.as_ref().and_then(|val| self.as_vec(val)))
+        }
+    }
+
+    struct SingleValuedTable {
+        val: IntWithLabel,
+    }
+
+    impl Table<1> for SingleValuedTable {
+        fn name() -> &'static str {
+            "tbl"
+        }
+
+        fn columns() -> [Column; 1] {
+            [
+                ColumnBuilder::new("val", DbType::CustomStruct(Box::new(IntWithLabelType)))
+                    .finish(),
+            ]
+        }
+
+        fn constraints() -> [CheckConstraint; 0] {
+            []
+        }
+
+        fn values(&self) -> [Box<dyn SqlValue>; 1] {
+            [Box::new(self.val.clone_tuple())]
+        }
+    }
+
+    #[test]
+    fn create_types() {
+        assert_eq!(
+            SingleValuedTable::create_types_sql().unwrap(),
+            "CREATE TYPE with_label AS (\
+                val smallint, \
+                label varchar\
+            );"
+        );
+    }
+
+    #[test]
+    fn create_table() {
+        assert_eq!(
+            SingleValuedTable::create_table_sql(),
+            "CREATE TABLE IF NOT EXISTS tbl (\
+                val with_label NOT NULL\
+            );"
+        );
+    }
+
+    #[test]
+    fn insert_simple() {
+        let x = SingleValuedTable {
+            val: IntWithLabel {
+                val: 0,
+                label: "foo-bar".to_string(),
+            },
+        };
+
+        assert_eq!(
+            x.insert_sql().unwrap(),
+            format!(
+                "INSERT INTO tbl (val) \
+                VALUES (\
+                    ROW(0, 'foo-bar')::with_label\
+                );",
             )
         );
     }
