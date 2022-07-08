@@ -98,7 +98,7 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ColumnBuilder, DbType};
+    use crate::{types::Nullable, ColumnBuilder, DbType};
     use uuid::Uuid;
 
     struct Buy {
@@ -142,9 +142,9 @@ mod tests {
             [
                 Box::new(self.buy_id),
                 Box::new(self.customer_id),
-                Box::new(self.has_discount),
-                Box::new(self.total_price),
-                Box::new(self.details.clone()),
+                Box::new(Nullable::from(self.has_discount)),
+                Box::new(Nullable::from(self.total_price)),
+                Box::new(Nullable::from(self.details.clone())),
             ]
         }
     }
@@ -265,7 +265,10 @@ mod tests {
 #[cfg(test)]
 mod tests_custom {
     use super::*;
-    use crate::{types::StructType, ColumnBuilder, DbType};
+    use crate::{
+        types::{Nullable, StructType},
+        ColumnBuilder, DbType,
+    };
 
     #[derive(Debug, Copy, Clone)]
     struct PointType;
@@ -301,9 +304,13 @@ mod tests_custom {
         fn as_nullable_vec(
             &self,
             val: &dyn SqlValue,
-        ) -> Option<Option<Vec<Box<dyn std::any::Any>>>> {
-            let value = val.downcast_ref::<Option<(i16, i16)>>()?;
-            Some(value.and_then(|val| self.as_vec(&val)))
+        ) -> Option<Nullable<Vec<Box<dyn std::any::Any>>>> {
+            let value = val.downcast_ref::<Nullable<(i16, i16)>>()?;
+            if let Nullable::Val(val) = value {
+                Some(Nullable::Val(self.as_vec(val)?))
+            } else {
+                Some(Nullable::Null)
+            }
         }
     }
 
@@ -337,7 +344,7 @@ mod tests_custom {
             [
                 Box::new(self.point_top_left.as_tuple()),
                 Box::new(self.point_bottom_right.as_tuple()),
-                Box::new(self.center.map(Point::as_tuple)),
+                Box::new(Nullable::from(self.center.map(Point::as_tuple))),
             ]
         }
     }
@@ -463,7 +470,10 @@ mod tests_custom {
 #[cfg(test)]
 mod tests_heterogeneous {
     use super::*;
-    use crate::{types::StructType, ColumnBuilder, DbType};
+    use crate::{
+        types::{Nullable, StructType},
+        ColumnBuilder, DbType,
+    };
 
     #[derive(Debug, Copy, Clone)]
     struct IntWithLabelType;
@@ -502,9 +512,13 @@ mod tests_heterogeneous {
         fn as_nullable_vec(
             &self,
             val: &dyn SqlValue,
-        ) -> Option<Option<Vec<Box<dyn std::any::Any>>>> {
-            let value = val.downcast_ref::<Option<(i16, String)>>()?;
-            Some(value.as_ref().and_then(|val| self.as_vec(val)))
+        ) -> Option<Nullable<Vec<Box<dyn std::any::Any>>>> {
+            let value = val.downcast_ref::<Nullable<(i16, String)>>()?;
+            if let Nullable::Val(val) = value {
+                Some(Nullable::Val(self.as_vec(val)?))
+            } else {
+                Some(Nullable::Null)
+            }
         }
     }
 

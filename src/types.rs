@@ -38,7 +38,7 @@ pub trait StructType: fmt::Debug {
     fn fields(&self) -> Vec<(String, DbType)>;
 
     fn as_vec(&self, val: &dyn Any) -> Option<Vec<Box<dyn Any>>>;
-    fn as_nullable_vec(&self, val: &dyn Any) -> Option<Option<Vec<Box<dyn Any>>>>;
+    fn as_nullable_vec(&self, val: &dyn Any) -> Option<Nullable<Vec<Box<dyn Any>>>>;
 
     fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues> {
         let values = self.as_vec(val)?;
@@ -51,7 +51,7 @@ pub trait StructType: fmt::Debug {
         Some(CommaSeparatedValues::with_values(values_with_fields))
     }
 
-    fn nullable_csv(&self, val: &dyn Any) -> Option<Option<CommaSeparatedValues>> {
+    fn nullable_csv(&self, val: &dyn Any) -> Option<Nullable<CommaSeparatedValues>> {
         let values = self.as_nullable_vec(val)?;
         Some(values.map(|values| {
             let values_with_fields = self
@@ -159,31 +159,31 @@ impl DbType {
 
         match self {
             Self::Boolean => {
-                let val = val.downcast_ref::<Option<bool>>()?;
+                let val = val.downcast_ref::<Nullable<bool>>()?;
                 Some(self.format_opt(val))
             }
             Self::Int16 => {
-                let val = val.downcast_ref::<Option<i16>>()?;
+                let val = val.downcast_ref::<Nullable<i16>>()?;
                 Some(self.format_opt(val))
             }
             Self::Int32 => {
-                let val = val.downcast_ref::<Option<i32>>()?;
+                let val = val.downcast_ref::<Nullable<i32>>()?;
                 Some(self.format_opt(val))
             }
             Self::Int64 => {
-                let val = val.downcast_ref::<Option<i64>>()?;
+                let val = val.downcast_ref::<Nullable<i64>>()?;
                 Some(self.format_opt(val))
             }
             Self::Uuid => {
-                let val = val.downcast_ref::<Option<uuid::Uuid>>()?;
+                let val = val.downcast_ref::<Nullable<uuid::Uuid>>()?;
                 Some(self.format_opt(val))
             }
             Self::Float => {
-                let val = val.downcast_ref::<Option<f32>>()?;
+                let val = val.downcast_ref::<Nullable<f32>>()?;
                 Some(self.format_opt(val))
             }
             Self::Double => {
-                let val = val.downcast_ref::<Option<f64>>()?;
+                let val = val.downcast_ref::<Nullable<f64>>()?;
                 Some(self.format_opt(val))
             }
             Self::Date => {
@@ -195,21 +195,21 @@ impl DbType {
             Self::Char(size) => {
                 let size: usize = size.unwrap_or(1).into();
                 if size == 1 {
-                    if let Some(val) = val.downcast_ref::<Option<char>>() {
+                    if let Some(val) = val.downcast_ref::<Nullable<char>>() {
                         return Some(self.format_opt(val));
                     }
                 }
-                let val = val.downcast_ref::<Option<String>>()?;
-                let value_len = val.as_ref().map(|s| s.len()).unwrap_or(0);
+                let val = val.downcast_ref::<Nullable<String>>()?;
+                let value_len = val.as_opt().map(|s| s.len()).unwrap_or(0);
                 if value_len > size {
                     return None;
                 }
                 Some(self.format_opt(val))
             }
             Self::VarChar(size) => {
-                let val = val.downcast_ref::<Option<String>>()?;
+                let val = val.downcast_ref::<Nullable<String>>()?;
                 if let Some(size) = size {
-                    let value_len = val.as_ref().map(|s| s.len()).unwrap_or(0);
+                    let value_len = val.as_opt().map(|s| s.len()).unwrap_or(0);
                     if value_len > usize::from(*size) {
                         return None;
                     }
@@ -217,7 +217,7 @@ impl DbType {
                 Some(self.format_opt(val))
             }
             Self::String => {
-                let val = val.downcast_ref::<Option<String>>()?;
+                let val = val.downcast_ref::<Nullable<String>>()?;
                 Some(self.format_opt(val))
             }
             Self::CustomStruct(ty) => {
@@ -273,11 +273,45 @@ impl DbType {
         }
     }
 
-    fn format_opt<V: fmt::Display>(&self, val: &Option<V>) -> String {
-        if let Some(val) = val {
+    fn format_opt<V: fmt::Display>(&self, val: &Nullable<V>) -> String {
+        if let Nullable::Val(val) = val {
             self.format(val)
         } else {
             "NULL".into()
+        }
+    }
+}
+
+pub enum Nullable<T> {
+    Val(T),
+    Null,
+}
+
+impl<T> From<Option<T>> for Nullable<T> {
+    fn from(x: Option<T>) -> Self {
+        if let Some(val) = x {
+            Self::Val(val)
+        } else {
+            Self::Null
+        }
+    }
+}
+
+impl<T> Nullable<T> {
+    pub fn map<U, F>(self, f: F) -> Nullable<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            Self::Val(x) => Nullable::Val(f(x)),
+            Self::Null => Nullable::Null,
+        }
+    }
+
+    pub const fn as_opt(&self) -> Option<&T> {
+        match self {
+            Self::Val(x) => Some(x),
+            Self::Null => None,
         }
     }
 }
