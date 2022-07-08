@@ -49,9 +49,8 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
     //  See the <https://github.com/rust-lang/rust/issues/65991> for details.
     fn values(&self) -> [Box<dyn SqlValue>; N];
 
-    fn insert_sql(&self) -> Result<String, column::Error> {
+    fn insert_values_row(&self) -> Result<String, column::Error> {
         let columns = Self::columns();
-        let columns_names = columns.iter().map(|c| c.name()).join(", ");
 
         let values = self.values();
         let values: Result<Vec<_>, _> = columns
@@ -60,13 +59,38 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
             .map(|(col, val)| col.escape_val(val.as_ref()))
             .collect();
 
-        let values = values?.join(", ");
+        Ok(values?.join(", "))
+    }
+
+    fn insert_sql(&self) -> Result<String, column::Error> {
+        let columns_names = Self::columns().iter().map(|c| c.name()).join(", ");
+        let values = self.insert_values_row()?;
 
         Ok(format!(
             "INSERT INTO {} ({}) VALUES ({});",
             Self::name(),
             columns_names,
             values,
+        ))
+    }
+
+    fn insert_many_sql(rows: &[Self]) -> Result<String, column::Error>
+    where
+        Self: Sized,
+    {
+        let columns_names = Self::columns().iter().map(|c| c.name()).join(", ");
+        let many_rows: Result<Vec<_>, _> = rows
+            .iter()
+            .map(|row| row.insert_values_row().map(|sql| format!("({})", sql)))
+            .collect();
+
+        let many_rows = many_rows?.join(", ");
+
+        Ok(format!(
+            "INSERT INTO {} ({}) VALUES {};",
+            Self::name(),
+            columns_names,
+            many_rows,
         ))
     }
 }
@@ -192,6 +216,47 @@ mod tests {
                         'the delivery should be performed'\
                     );",
                 b.buy_id, b.customer_id
+            )
+        );
+    }
+
+    #[test]
+    fn insert_both() {
+        let buys = vec![
+            Buy {
+                buy_id: Uuid::new_v4(),
+                customer_id: Uuid::new_v4(),
+                has_discount: None,
+                total_price: Some(14.56),
+                details: None,
+            },
+            Buy {
+                buy_id: Uuid::new_v4(),
+                customer_id: Uuid::new_v4(),
+                has_discount: Some(true),
+                total_price: Some(18899.9),
+                details: Some("the delivery should be performed".into()),
+            },
+        ];
+
+        assert_eq!(
+            Buy::insert_many_sql(&buys).unwrap(),
+            format!(
+                "INSERT INTO buys (buy_id, customer_id, has_discount, total_price, details) \
+                VALUES (\
+                    '{}', \
+                    '{}', \
+                    NULL, \
+                    14.56, \
+                    NULL\
+                ), (\
+                    '{}', \
+                    '{}', \
+                    true, \
+                    18899.9, \
+                    'the delivery should be performed'\
+                );",
+                buys[0].buy_id, buys[0].customer_id, buys[1].buy_id, buys[1].customer_id
             )
         );
     }
@@ -349,6 +414,48 @@ mod tests_custom {
                 im.point_bottom_right.y,
                 im.center.unwrap().x,
                 im.center.unwrap().y
+            )
+        );
+    }
+
+    #[test]
+    fn insert_both() {
+        let images = vec![
+            Image {
+                point_top_left: Point { x: 5, y: 8 },
+                point_bottom_right: Point { x: 215, y: 160 },
+                center: None,
+            },
+            Image {
+                point_top_left: Point { x: 5, y: 8 },
+                point_bottom_right: Point { x: 215, y: 160 },
+                center: Some(Point { x: 100, y: 80 }),
+            },
+        ];
+
+        assert_eq!(
+            Image::insert_many_sql(&images).unwrap(),
+            format!(
+                "INSERT INTO images (top_left, bottom_right, center) \
+                VALUES (\
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d, \
+                    NULL\
+                ), (\
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d\
+                );",
+                images[0].point_top_left.x,
+                images[0].point_top_left.y,
+                images[0].point_bottom_right.x,
+                images[0].point_bottom_right.y,
+                images[1].point_top_left.x,
+                images[1].point_top_left.y,
+                images[1].point_bottom_right.x,
+                images[1].point_bottom_right.y,
+                images[1].center.unwrap().x,
+                images[1].center.unwrap().y
             )
         );
     }
