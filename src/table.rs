@@ -14,8 +14,22 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
 
     fn constraints() -> [CheckConstraint; CONSTRAINTS_N];
 
+    fn create_types_sql() -> Option<String> {
+        let types = Self::columns()
+            .iter()
+            .filter_map(|col| col.db_type().create_sql())
+            .unique()
+            .join("; ");
+
+        if types.is_empty() {
+            None
+        } else {
+            Some(format!("{};", types))
+        }
+    }
+
     fn create_table_sql() -> String {
-        let columns: String = Self::columns().iter().map(|col| col.to_string()).join(",");
+        let columns: String = Self::columns().iter().map(|col| col.to_string()).join(", ");
         let mut sql = columns;
 
         let constraints = Self::constraints()
@@ -37,7 +51,7 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
 
     fn insert_sql(&self) -> Result<String, column::Error> {
         let columns = Self::columns();
-        let columns_names = columns.iter().map(|c| c.name()).join(",");
+        let columns_names = columns.iter().map(|c| c.name()).join(", ");
 
         let values = self.values();
         let values: Result<Vec<_>, _> = columns
@@ -46,7 +60,7 @@ pub trait Table<const N: usize, const CONSTRAINTS_N: usize = 0> {
             .map(|(col, val)| col.escape_val(val.as_ref()))
             .collect();
 
-        let values = values?.join(",");
+        let values = values?.join(", ");
 
         Ok(format!(
             "INSERT INTO {} ({}) VALUES ({});",
@@ -112,14 +126,19 @@ mod tests {
     }
 
     #[test]
+    fn create_types() {
+        assert!(Buy::create_types_sql().is_none(),);
+    }
+
+    #[test]
     fn create_table() {
         assert_eq!(
             Buy::create_table_sql(),
             "CREATE TABLE IF NOT EXISTS buys (\
-                buy_id uuid NOT NULL UNIQUE PRIMARY KEY,\
-                customer_id uuid NOT NULL REFERENCES users(user_id),\
-                has_discount boolean NULL,\
-                total_price real NULL,\
+                buy_id uuid NOT NULL UNIQUE PRIMARY KEY, \
+                customer_id uuid NOT NULL REFERENCES users(user_id), \
+                has_discount boolean NULL, \
+                total_price real NULL, \
                 details varchar NULL\
             );"
         );
@@ -138,12 +157,12 @@ mod tests {
         assert_eq!(
             b.insert_sql().unwrap(),
             format!(
-                "INSERT INTO buys (buy_id,customer_id,has_discount,total_price,details) \
+                "INSERT INTO buys (buy_id, customer_id, has_discount, total_price, details) \
                 VALUES (\
-                    '{}',\
-                    '{}',\
-                    NULL,\
-                    14.56,\
+                    '{}', \
+                    '{}', \
+                    NULL, \
+                    14.56, \
                     NULL\
                 );",
                 b.buy_id, b.customer_id
@@ -164,15 +183,172 @@ mod tests {
         assert_eq!(
             b.insert_sql().unwrap(),
             format!(
-                "INSERT INTO buys (buy_id,customer_id,has_discount,total_price,details) \
+                "INSERT INTO buys (buy_id, customer_id, has_discount, total_price, details) \
                     VALUES (\
-                        '{}',\
-                        '{}',\
-                        true,\
-                        18899.9,\
+                        '{}', \
+                        '{}', \
+                        true, \
+                        18899.9, \
                         'the delivery should be performed'\
                     );",
                 b.buy_id, b.customer_id
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_custom {
+    use super::*;
+    use crate::{
+        types::{CommaSeparatedValues, Displayable, StructType},
+        ColumnBuilder, DbType,
+    };
+
+    #[derive(Debug, Copy, Clone)]
+    struct PointType;
+
+    // TODO: combine those types together
+
+    #[derive(Debug, Copy, Clone)]
+    struct Point {
+        x: i16,
+        y: i16,
+    }
+
+    impl Point {
+        fn as_tuple(self) -> (i16, i16) {
+            (self.x, self.y)
+        }
+    }
+
+    impl StructType for PointType {
+        fn name(&self) -> String {
+            "point2d".into()
+        }
+
+        fn fields(&self) -> Vec<(String, DbType)> {
+            vec![("x".into(), DbType::Int16), ("y".into(), DbType::Int16)]
+        }
+
+        fn csv(&self, val: &dyn SqlValue) -> Option<CommaSeparatedValues> {
+            let (x, y) = val.downcast_ref::<(i16, i16)>()?;
+            let values: Vec<Box<dyn Displayable>> = vec![Box::new(*x), Box::new(*y)];
+            Some(CommaSeparatedValues::with_values(values))
+        }
+
+        fn nullable_csv(&self, val: &dyn SqlValue) -> Option<Option<CommaSeparatedValues>> {
+            let value = val.downcast_ref::<Option<(i16, i16)>>()?;
+            Some(value.and_then(|val| self.csv(&val)))
+        }
+    }
+
+    struct Image {
+        point_top_left: Point,
+        point_bottom_right: Point,
+        center: Option<Point>,
+    }
+
+    impl Table<3> for Image {
+        fn name() -> &'static str {
+            "images"
+        }
+
+        fn columns() -> [Column; 3] {
+            [
+                ColumnBuilder::new("top_left", DbType::CustomStruct(Box::new(PointType))).finish(),
+                ColumnBuilder::new("bottom_right", DbType::CustomStruct(Box::new(PointType)))
+                    .finish(),
+                ColumnBuilder::new("center", DbType::CustomStruct(Box::new(PointType)))
+                    .nullable()
+                    .finish(),
+            ]
+        }
+
+        fn constraints() -> [CheckConstraint; 0] {
+            []
+        }
+
+        fn values(&self) -> [Box<dyn SqlValue>; 3] {
+            [
+                Box::new(self.point_top_left.as_tuple()),
+                Box::new(self.point_bottom_right.as_tuple()),
+                Box::new(self.center.map(Point::as_tuple)),
+            ]
+        }
+    }
+
+    #[test]
+    fn create_types() {
+        assert_eq!(
+            Image::create_types_sql().unwrap(),
+            "CREATE TYPE point2d AS (\
+                x smallint, \
+                y smallint\
+            );"
+        );
+    }
+
+    #[test]
+    fn create_table() {
+        assert_eq!(
+            Image::create_table_sql(),
+            "CREATE TABLE IF NOT EXISTS images (\
+                top_left point2d NOT NULL, \
+                bottom_right point2d NOT NULL, \
+                center point2d NULL\
+            );"
+        );
+    }
+
+    #[test]
+    fn insert_simple() {
+        let im = Image {
+            point_top_left: Point { x: 5, y: 8 },
+            point_bottom_right: Point { x: 215, y: 160 },
+            center: None,
+        };
+
+        assert_eq!(
+            im.insert_sql().unwrap(),
+            format!(
+                "INSERT INTO images (top_left, bottom_right, center) \
+                VALUES (\
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d, \
+                    NULL\
+                );",
+                im.point_top_left.x,
+                im.point_top_left.y,
+                im.point_bottom_right.x,
+                im.point_bottom_right.y
+            )
+        );
+    }
+
+    #[test]
+    fn insert_with_center() {
+        let im = Image {
+            point_top_left: Point { x: 5, y: 8 },
+            point_bottom_right: Point { x: 215, y: 160 },
+            center: Some(Point { x: 100, y: 80 }),
+        };
+
+        assert_eq!(
+            im.insert_sql().unwrap(),
+            format!(
+                "INSERT INTO images (top_left, bottom_right, center) \
+                VALUES (\
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d, \
+                    ROW({}, {})::point2d\
+                );",
+                im.point_top_left.x,
+                im.point_top_left.y,
+                im.point_bottom_right.x,
+                im.point_bottom_right.y,
+                im.center.unwrap().x,
+                im.center.unwrap().y
             )
         );
     }

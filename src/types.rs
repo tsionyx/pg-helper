@@ -3,8 +3,48 @@
 
 use std::{any::Any, fmt};
 
-#[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
+use itertools::Itertools as _;
+
+pub trait Displayable: Any + fmt::Display {}
+
+impl<T: Any + fmt::Display> Displayable for T {}
+
+pub struct CommaSeparatedValues {
+    values: Vec<Box<dyn Displayable>>,
+}
+
+impl CommaSeparatedValues {
+    pub fn with_values(values: Vec<Box<dyn Displayable>>) -> Self {
+        Self { values }
+    }
+}
+
+impl fmt::Display for CommaSeparatedValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut has_items = false;
+        for val in &self.values {
+            if has_items {
+                write!(f, ", {}", val)?;
+            } else {
+                write!(f, "{}", val)?;
+            }
+
+            has_items = true;
+        }
+
+        Ok(())
+    }
+}
+
+pub trait StructType: fmt::Debug {
+    fn name(&self) -> String;
+    fn fields(&self) -> Vec<(String, DbType)>;
+
+    fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues>;
+    fn nullable_csv(&self, val: &dyn Any) -> Option<Option<CommaSeparatedValues>>;
+}
+
+#[derive(Debug)]
 pub enum DbType {
     Boolean,
     Int16,
@@ -18,6 +58,7 @@ pub enum DbType {
     Char(Option<u8>),
     VarChar(Option<u8>),
     String,
+    CustomStruct(Box<dyn StructType>),
 }
 
 impl DbType {
@@ -82,6 +123,10 @@ impl DbType {
             Self::String => {
                 let val = val.downcast_ref::<String>()?;
                 Some(self.format(val))
+            }
+            Self::CustomStruct(ty) => {
+                let val = ty.csv(val)?;
+                Some(self.format(&val))
             }
         }
     }
@@ -154,6 +199,35 @@ impl DbType {
                 let val = val.downcast_ref::<Option<String>>()?;
                 Some(self.format_opt(val))
             }
+            Self::CustomStruct(ty) => {
+                let val = ty.nullable_csv(val)?;
+                Some(self.format_opt(&val))
+            }
+        }
+    }
+
+    pub fn create_sql(&self) -> Option<String> {
+        match self {
+            Self::Boolean
+            | Self::Int16
+            | Self::Int32
+            | Self::Int64
+            | Self::Uuid
+            | Self::Float
+            | Self::Double
+            | Self::Date
+            | Self::Json
+            | Self::Char(_)
+            | Self::VarChar(_)
+            | Self::String => None,
+            Self::CustomStruct(ty) => {
+                let fields = ty.fields();
+                let fields = fields
+                    .iter()
+                    .map(|(f_name, f_type)| format!("{} {}", f_name, f_type))
+                    .join(", ");
+                Some(format!("CREATE TYPE {} AS ({})", ty.name(), fields))
+            }
         }
     }
 
@@ -171,6 +245,9 @@ impl DbType {
             }
             Self::Json => {
                 todo!()
+            }
+            Self::CustomStruct(ty) => {
+                format!("ROW({})::{}", val, ty.name())
             }
         }
     }
@@ -211,6 +288,7 @@ impl fmt::Display for DbType {
                 }
             }
             Self::String => write!(f, "text"),
+            Self::CustomStruct(ty) => write!(f, "{}", ty.name()),
         }
     }
 }

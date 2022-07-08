@@ -31,7 +31,6 @@ impl ColumnBuilder {
         self
     }
 
-    #[allow(dead_code)]
     pub const fn unique(mut self) -> Self {
         self.unique = true;
         self
@@ -93,12 +92,12 @@ impl Column {
                 .escape_nullable_val(val)
                 .ok_or_else(|| Error::BadValueForNullable {
                     column_name: self.name().into(),
-                    column_type: self.db_type(),
+                    column_type: self.db_type().to_string(),
                 })
         } else {
             self.db_type.escape_val(val).ok_or_else(|| Error::BadValue {
                 column_name: self.name().into(),
-                column_type: self.db_type(),
+                column_type: self.db_type().to_string(),
             })
         }
     }
@@ -108,11 +107,11 @@ impl Column {
 pub enum Error {
     BadValue {
         column_name: String,
-        column_type: DbType,
+        column_type: String,
     },
     BadValueForNullable {
         column_name: String,
-        column_type: DbType,
+        column_type: String,
     },
 }
 
@@ -145,10 +144,9 @@ impl Display for Error {
 
 impl std::error::Error for Error {}
 
-#[allow(dead_code)]
 impl Column {
-    pub const fn db_type(&self) -> DbType {
-        self.db_type
+    pub const fn db_type(&self) -> &DbType {
+        &self.db_type
     }
 
     pub const fn is_nullable(&self) -> bool {
