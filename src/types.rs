@@ -33,6 +33,35 @@ impl fmt::Display for CommaSeparatedValues {
     }
 }
 
+pub struct CommaSeparatedVec<'t> {
+    values: Vec<Box<dyn Any>>,
+    db_type: &'t DbType,
+}
+
+impl<'t> CommaSeparatedVec<'t> {
+    pub fn with_values(values: Vec<Box<dyn Any>>, db_type: &'t DbType) -> Self {
+        Self { values, db_type }
+    }
+}
+
+impl fmt::Display for CommaSeparatedVec<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut has_items = false;
+        for val in &self.values {
+            let value = self.db_type.escape_val(val.as_ref()).ok_or(fmt::Error)?;
+            if has_items {
+                write!(f, ", {}", value)?;
+            } else {
+                write!(f, "{}", value)?;
+            }
+
+            has_items = true;
+        }
+
+        Ok(())
+    }
+}
+
 pub trait StructType: fmt::Debug {
     fn name(&self) -> String;
     fn fields(&self) -> Vec<(String, DbType)>;
@@ -76,6 +105,7 @@ pub enum DbType {
     VarChar(Option<u8>),
     String,
     CustomStruct(Box<dyn StructType>),
+    Array(Box<Self>),
 }
 
 impl DbType {
@@ -143,6 +173,10 @@ impl DbType {
             }
             Self::CustomStruct(ty) => {
                 let val = ty.csv(val)?;
+                Some(self.format(&val))
+            }
+            Self::Array(ty) => {
+                let val = ty.as_ref().array_csv(val)?;
                 Some(self.format(&val))
             }
         }
@@ -220,6 +254,10 @@ impl DbType {
                 let val = ty.nullable_csv(val)?;
                 Some(self.format_opt(&val))
             }
+            Self::Array(ty) => {
+                let val = ty.nullable_array_csv(val)?;
+                Some(self.format_opt(&val))
+            }
         }
     }
 
@@ -245,6 +283,7 @@ impl DbType {
                     .join(", ");
                 Some(format!("CREATE TYPE {} AS ({})", ty.name(), fields))
             }
+            Self::Array(ty) => ty.create_sql(),
         }
     }
 
@@ -266,6 +305,9 @@ impl DbType {
             Self::CustomStruct(ty) => {
                 format!("ROW({})::{}", val, ty.name())
             }
+            Self::Array(_) => {
+                format!("{{{}}}", val)
+            }
         }
     }
 
@@ -275,6 +317,118 @@ impl DbType {
         } else {
             "NULL".into()
         }
+    }
+}
+
+macro_rules! convert_to_vec_of {
+    ($val:expr, $t:ty) => {{
+        $val.downcast_ref::<Vec<$t>>().map(|vec_of_vals| {
+            vec_of_vals
+                .iter()
+                .map(|v| Box::new(v.clone()) as Box<dyn Any>)
+                .collect()
+        })
+    }};
+}
+
+macro_rules! convert_to_nullable_vec_of {
+    ($val:expr, $t:ty) => {{
+        $val.downcast_ref::<Nullable<Vec<$t>>>().map(|vec_of_vals| {
+            vec_of_vals.as_ref().map(|vec_of_vals| {
+                vec_of_vals
+                    .iter()
+                    .map(|v| Box::new(v.clone()) as Box<dyn Any>)
+                    .collect()
+            })
+        })
+    }};
+}
+
+impl DbType {
+    fn as_vec(&self, val: &dyn Any) -> Option<Vec<Box<dyn Any + '_>>> {
+        match self {
+            Self::Boolean => convert_to_vec_of!(val, bool),
+            Self::Int16 => convert_to_vec_of!(val, i16),
+            Self::Int32 => convert_to_vec_of!(val, i32),
+            Self::Int64 => convert_to_vec_of!(val, i64),
+            Self::Uuid => convert_to_vec_of!(val, uuid::Uuid),
+            Self::Float => convert_to_vec_of!(val, f32),
+            Self::Double => convert_to_vec_of!(val, f64),
+            Self::Date => {
+                todo!()
+            }
+            Self::Json => {
+                todo!()
+            }
+            Self::Char(size) => {
+                let size: usize = size.unwrap_or(1).into();
+                if size == 1 {
+                    if let Some(val) = convert_to_vec_of!(val, char) {
+                        return Some(val);
+                    }
+                }
+
+                convert_to_vec_of!(val, String)
+            }
+            Self::VarChar(_) | Self::String => convert_to_vec_of!(val, String),
+            Self::CustomStruct(_) => {
+                todo!("which type to put here?")
+            }
+
+            Self::Array(_) => {
+                unimplemented!("Only 1 dimensional array are supported for now")
+            }
+        }
+    }
+
+    fn as_nullable_vec(&self, val: &dyn Any) -> Option<Nullable<Vec<Box<dyn Any>>>> {
+        match self {
+            Self::Boolean => convert_to_nullable_vec_of!(val, bool),
+            Self::Int16 => convert_to_nullable_vec_of!(val, i16),
+            Self::Int32 => convert_to_nullable_vec_of!(val, i32),
+            Self::Int64 => convert_to_nullable_vec_of!(val, i64),
+            Self::Uuid => convert_to_nullable_vec_of!(val, uuid::Uuid),
+            Self::Float => convert_to_nullable_vec_of!(val, f32),
+            Self::Double => convert_to_nullable_vec_of!(val, f64),
+            Self::Date => {
+                todo!()
+            }
+            Self::Json => {
+                todo!()
+            }
+            Self::Char(size) => {
+                let size: usize = size.unwrap_or(1).into();
+                if size == 1 {
+                    if let Some(val) = convert_to_nullable_vec_of!(val, char) {
+                        return Some(val);
+                    }
+                }
+
+                convert_to_nullable_vec_of!(val, String)
+            }
+            Self::VarChar(_) | Self::String => convert_to_nullable_vec_of!(val, String),
+            Self::CustomStruct(_) => {
+                todo!("which type to put here?")
+            }
+
+            Self::Array(_) => {
+                unimplemented!("Only 1 dimensional array are supported for now")
+            }
+        }
+    }
+
+    fn _csv_from_vals(&self, values: Vec<Box<dyn Any>>) -> CommaSeparatedVec {
+        CommaSeparatedVec::with_values(values, self)
+    }
+
+    fn array_csv(&self, val: &dyn Any) -> Option<CommaSeparatedVec> {
+        let values = self.as_vec(val)?;
+        Some(self._csv_from_vals(values))
+    }
+
+    fn nullable_array_csv(&self, val: &dyn Any) -> Option<Nullable<CommaSeparatedVec>> {
+        let values = self.as_nullable_vec(val)?;
+        Some(values.map(|values| self._csv_from_vals(values)))
     }
 }
 
@@ -310,6 +464,13 @@ impl<T> Nullable<T> {
             Self::Null => None,
         }
     }
+
+    pub const fn as_ref(&self) -> Nullable<&T> {
+        match self {
+            Self::Val(x) => Nullable::Val(x),
+            Self::Null => Nullable::Null,
+        }
+    }
 }
 
 impl fmt::Display for DbType {
@@ -340,6 +501,11 @@ impl fmt::Display for DbType {
             }
             Self::String => write!(f, "text"),
             Self::CustomStruct(ty) => write!(f, "{}", ty.name()),
+
+            // This syntax conforms to the SQL standard.
+            // However, the alternative syntax can be used:
+            // Self::Array(ty) => write!(f, "{}[]", ty),
+            Self::Array(ty) => write!(f, "{} ARRAY", ty),
         }
     }
 }
