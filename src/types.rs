@@ -40,28 +40,24 @@ pub trait StructType: fmt::Debug {
     fn as_vec(&self, val: &dyn Any) -> Option<Vec<Box<dyn Any>>>;
     fn as_nullable_vec(&self, val: &dyn Any) -> Option<Nullable<Vec<Box<dyn Any>>>>;
 
-    fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues> {
-        let values = self.as_vec(val)?;
+    fn _csv_from_vals(&self, values: Vec<Box<dyn Any>>) -> CommaSeparatedValues {
         let values_with_fields = self
             .fields()
             .into_iter()
             .map(|(_, ty)| ty)
             .zip(values)
             .collect();
-        Some(CommaSeparatedValues::with_values(values_with_fields))
+        CommaSeparatedValues::with_values(values_with_fields)
+    }
+
+    fn csv(&self, val: &dyn Any) -> Option<CommaSeparatedValues> {
+        let values = self.as_vec(val)?;
+        Some(self._csv_from_vals(values))
     }
 
     fn nullable_csv(&self, val: &dyn Any) -> Option<Nullable<CommaSeparatedValues>> {
         let values = self.as_nullable_vec(val)?;
-        Some(values.map(|values| {
-            let values_with_fields = self
-                .fields()
-                .into_iter()
-                .map(|(_, ty)| ty)
-                .zip(values)
-                .collect();
-            CommaSeparatedValues::with_values(values_with_fields)
-        }))
+        Some(values.map(|values| self._csv_from_vals(values)))
     }
 }
 
