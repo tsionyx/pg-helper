@@ -1,9 +1,7 @@
-use std::{
-    any::Any,
-    fmt::{self, Debug, Display},
-};
+use std::fmt::{self, Debug, Display};
 
-use crate::types::DbType;
+use itertools::Itertools;
+use postgres_types::{Field, Kind, Type as DbType};
 
 pub struct ColumnBuilder {
     name: String,
@@ -85,64 +83,15 @@ impl Column {
         &self.name
     }
 
-    pub fn escape_val(&self, val: &dyn Any) -> Result<String, Error> {
-        // TODO: include value into Error
-        if self.nullable {
-            self.db_type
-                .escape_nullable_val(val)
-                .ok_or_else(|| Error::BadValueForNullable {
-                    column_name: self.name().into(),
-                    column_type: self.db_type().to_string(),
-                })
+    pub(crate) fn type_create_sql(&self) -> Option<String> {
+        let type_defs = type_definition(self.db_type());
+        if type_defs.is_empty() {
+            None
         } else {
-            self.db_type.escape_val(val).ok_or_else(|| Error::BadValue {
-                column_name: self.name().into(),
-                column_type: self.db_type().to_string(),
-            })
+            Some(type_defs.into_iter().unique().join("; "))
         }
     }
 }
-
-#[derive(Debug)]
-pub enum Error {
-    BadValue {
-        column_name: String,
-        column_type: String,
-    },
-    BadValueForNullable {
-        column_name: String,
-        column_type: String,
-    },
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BadValue {
-                column_name,
-                column_type,
-            } => {
-                write!(
-                    f,
-                    "The value cannot be inserted into column '{}' of type '{} NOT NULL'",
-                    column_name, column_type
-                )
-            }
-            Self::BadValueForNullable {
-                column_name,
-                column_type,
-            } => {
-                write!(
-                    f,
-                    "The value cannot be inserted into column '{}' of type '{}'",
-                    column_name, column_type
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
 
 impl Column {
     pub const fn db_type(&self) -> &DbType {
@@ -182,4 +131,55 @@ impl Display for Column {
             self.name, self.db_type, nullable, unique, primary_key, foreign_key
         )
     }
+}
+
+/// Construct _CREATE_ statement for a type if it is not a standard type.
+/// Returns `Vec` of statements to include all the nested types also.
+fn type_definition(ty: &DbType) -> Vec<String> {
+    match ty.kind() {
+        Kind::Simple | Kind::Pseudo => vec![],
+        Kind::Array(inner) => type_definition(inner),
+        Kind::Range(inner) => {
+            // TODO: check for the range itself whether it is a standard type
+            type_definition(inner)
+        }
+        Kind::Domain(inner) => {
+            let mut so_far = type_definition(inner);
+            so_far.push(format!("CREATE DOMAIN \"{}\" AS {}", ty, inner));
+            so_far
+        }
+        Kind::Enum(fields) => {
+            let fields = fields.iter().map(|f| format!("'{}'", f)).join(", ");
+            vec![format!("CREATE TYPE \"{}\" AS ENUM ({})", ty, fields)]
+        }
+        Kind::Composite(fields) => {
+            let mut so_far: Vec<_> = fields
+                .iter()
+                .flat_map(|f| type_definition(f.type_()))
+                .collect();
+
+            let fields = fields
+                .iter()
+                .map(|f| format!("{} {}", f.name(), f.type_()))
+                .join(", ");
+            so_far.push(format!("CREATE TYPE {} AS ({})", ty.name(), fields));
+            so_far
+        }
+        other_kind => {
+            unimplemented!("Unhandled type kind: {:?}", other_kind)
+        }
+    }
+}
+
+pub fn struct_type(name: impl AsRef<str>, fields: &[(impl AsRef<str>, DbType)]) -> DbType {
+    let fields = fields
+        .iter()
+        .map(|(name, type_)| Field::new(name.as_ref().to_owned(), type_.clone()))
+        .collect();
+    DbType::new(
+        name.as_ref().to_owned(),
+        0,
+        Kind::Composite(fields),
+        "public".into(),
+    )
 }

@@ -8,4 +8,5 @@ description = "Help to build PostgreSQL communication without complex ORM"
 
 [dependencies]
 itertools = "0.10"
-uuid = { version = "1.1", features = ["v4"]}
+uuid = { version = "1.0", features = ["v4"]}
+postgres-types = { version = "0.2", features = ["derive", "with-uuid-1"] }
