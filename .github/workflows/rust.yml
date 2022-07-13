@@ -1,0 +1,147 @@
+# Based on https://github.com/actions-rs/meta/blob/master/recipes/msrv.md
+name: Rust
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+  pull_request:
+    branches: [ master ]
+
+
+jobs:
+  fmt:
+    name: Rustfmt on rust '${{ matrix.rust }}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.59.0
+          - stable
+          - beta
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Install rustfmt
+        run: rustup component add rustfmt
+
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  test:
+    name: Test Suite on rust '${{ matrix.rust }}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.59.0
+          - stable
+          - beta
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo_registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v2
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.rust }}-cargo_target-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            - ${{ runner.os }}-${{ matrix.rust }}-cargo_target-test-
+            - ${{ runner.os }}-${{ matrix.rust }}-cargo_target-
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features --workspace
+
+      # - name: Run cargo test (ignored)
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: test
+      #     args: --all-features --workspace -- --ignored
+
+  clippy:
+    name: Clippy on rust '${{ matrix.rust }}'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.59.0
+          - stable
+          - beta
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Install clippy
+        run: rustup component add clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo_registry-
+
+      - name: Cache cargo build
+        uses: actions/cache@v2
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.rust }}-cargo_target-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            - ${{ runner.os }}-${{ matrix.rust }}-cargo_target-clippy-
+            - ${{ runner.os }}-${{ matrix.rust }}-cargo_target-
+
+      - name: Run cargo clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --workspace -- -Dwarnings #-W clippy::nursery -W clippy::pedantic
+
+      - name: Run cargo clippy with all features
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --all-features --workspace -- -Dwarnings #-W clippy::nursery -W clippy::pedantic
