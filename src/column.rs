@@ -1,7 +1,8 @@
 use std::fmt::{self, Debug, Display};
 
-use itertools::Itertools;
-use postgres_types::{Field, Kind, Type as DbType};
+use postgres_types::{Kind, Type as DbType};
+
+use crate::type_helpers::TypeNameAndCreate;
 
 pub struct ColumnBuilder {
     name: String,
@@ -83,13 +84,8 @@ impl Column {
         &self.name
     }
 
-    pub(crate) fn type_create_sql(&self) -> Option<String> {
-        let type_defs = type_definition(self.db_type());
-        if type_defs.is_empty() {
-            None
-        } else {
-            Some(type_defs.into_iter().unique().join("; "))
-        }
+    pub(crate) fn type_create_sql(&self) -> Vec<TypeNameAndCreate> {
+        TypeNameAndCreate::from_type(self.db_type())
     }
 }
 
@@ -125,61 +121,16 @@ impl Display for Column {
         } else {
             "".into()
         };
+
+        let type_desc = match self.db_type.kind() {
+            Kind::Array(inner) => format!("{}[]", inner),
+            _ => self.db_type.to_string(),
+        };
+
         write!(
             f,
             "{} {}{}{}{}{}",
-            self.name, self.db_type, nullable, unique, primary_key, foreign_key
+            self.name, type_desc, nullable, unique, primary_key, foreign_key
         )
     }
-}
-
-/// Construct _CREATE_ statement for a type if it is not a standard type.
-/// Returns `Vec` of statements to include all the nested types also.
-fn type_definition(ty: &DbType) -> Vec<String> {
-    match ty.kind() {
-        Kind::Simple | Kind::Pseudo => vec![],
-        Kind::Array(inner) => type_definition(inner),
-        Kind::Range(inner) => {
-            // TODO: check for the range itself whether it is a standard type
-            type_definition(inner)
-        }
-        Kind::Domain(inner) => {
-            let mut so_far = type_definition(inner);
-            so_far.push(format!("CREATE DOMAIN \"{}\" AS {}", ty, inner));
-            so_far
-        }
-        Kind::Enum(fields) => {
-            let fields = fields.iter().map(|f| format!("'{}'", f)).join(", ");
-            vec![format!("CREATE TYPE \"{}\" AS ENUM ({})", ty, fields)]
-        }
-        Kind::Composite(fields) => {
-            let mut so_far: Vec<_> = fields
-                .iter()
-                .flat_map(|f| type_definition(f.type_()))
-                .collect();
-
-            let fields = fields
-                .iter()
-                .map(|f| format!("{} {}", f.name(), f.type_()))
-                .join(", ");
-            so_far.push(format!("CREATE TYPE {} AS ({})", ty.name(), fields));
-            so_far
-        }
-        other_kind => {
-            unimplemented!("Unhandled type kind: {:?}", other_kind)
-        }
-    }
-}
-
-pub fn struct_type(name: impl AsRef<str>, fields: &[(impl AsRef<str>, DbType)]) -> DbType {
-    let fields = fields
-        .iter()
-        .map(|(name, type_)| Field::new(name.as_ref().to_owned(), type_.clone()))
-        .collect();
-    DbType::new(
-        name.as_ref().to_owned(),
-        0,
-        Kind::Composite(fields),
-        "public".into(),
-    )
 }
