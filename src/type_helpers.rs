@@ -2,12 +2,12 @@ use itertools::Itertools;
 use postgres_types::{Field, Kind, Type};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct TypeNameAndCreate {
+pub struct ObjectAndCreateSql {
     name: String,
     create_sql: String,
 }
 
-impl TypeNameAndCreate {
+impl ObjectAndCreateSql {
     pub(crate) fn new(name: impl AsRef<str>, create_sql: impl AsRef<str>) -> Self {
         Self {
             name: name.as_ref().to_owned(),

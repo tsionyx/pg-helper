@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use itertools::Itertools as _;
 use postgres_types::ToSql;
 
-use crate::{column::Column, constraint::CheckConstraint, type_helpers::TypeNameAndCreate};
+use crate::{column::Column, constraint::CheckConstraint, type_helpers::ObjectAndCreateSql};
 
 pub trait Table<const N: usize> {
     fn name() -> &'static str;
@@ -14,10 +14,17 @@ pub trait Table<const N: usize> {
         None
     }
 
-    fn create_types_sql() -> Vec<TypeNameAndCreate> {
+    fn create_indices_sql() -> Vec<ObjectAndCreateSql> {
         Self::columns()
             .iter()
-            .flat_map(|col| col.type_create_sql())
+            .filter_map(|col| col.create_index_sql(Self::name()))
+            .collect()
+    }
+
+    fn create_types_sql() -> Vec<ObjectAndCreateSql> {
+        Self::columns()
+            .iter()
+            .flat_map(|col| col.create_types_sql())
             .unique()
             .collect()
     }
@@ -218,7 +225,7 @@ mod tests {
         fn create_types() {
             assert_eq!(
                 Image::create_types_sql(),
-                [TypeNameAndCreate::new(
+                [ObjectAndCreateSql::new(
                     "point2d",
                     "CREATE TYPE point2d AS (x int2, y int2)"
                 )]
@@ -306,7 +313,7 @@ mod tests {
         fn create_types() {
             assert_eq!(
                 SingleValuedTable::create_types_sql(),
-                [TypeNameAndCreate::new(
+                [ObjectAndCreateSql::new(
                     "with_label",
                     "CREATE TYPE with_label AS (val int2, label varchar)"
                 )]

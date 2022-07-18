@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Display};
 
 use postgres_types::{Kind, Type as DbType};
 
-use crate::type_helpers::TypeNameAndCreate;
+use crate::type_helpers::ObjectAndCreateSql;
 
 pub struct ColumnBuilder {
     name: String,
@@ -11,6 +11,7 @@ pub struct ColumnBuilder {
     unique: bool,
     primary_key: bool,
     foreign_key: Option<(String, String)>,
+    index: Option<IndexMethod>,
 }
 
 impl ColumnBuilder {
@@ -22,6 +23,7 @@ impl ColumnBuilder {
             unique: false,
             primary_key: false,
             foreign_key: None,
+            index: None,
         }
     }
 
@@ -46,6 +48,15 @@ impl ColumnBuilder {
         self
     }
 
+    pub fn index(self) -> Self {
+        self.index_with(IndexMethod::default())
+    }
+
+    pub fn index_with(mut self, method: IndexMethod) -> Self {
+        self.index = Some(method);
+        self
+    }
+
     pub fn finish(self) -> Column {
         Column {
             name: self.name,
@@ -54,6 +65,7 @@ impl ColumnBuilder {
             unique: self.unique,
             primary_key: self.primary_key,
             foreign_key: self.foreign_key,
+            index: self.index,
         }
     }
 }
@@ -66,6 +78,7 @@ pub struct Column {
     unique: bool,
     primary_key: bool,
     foreign_key: Option<(String, String)>,
+    index: Option<IndexMethod>,
 }
 
 impl Column {
@@ -77,6 +90,7 @@ impl Column {
             unique: false,
             primary_key: false,
             foreign_key: None,
+            index: None,
         }
     }
 
@@ -84,8 +98,19 @@ impl Column {
         &self.name
     }
 
-    pub(crate) fn type_create_sql(&self) -> Vec<TypeNameAndCreate> {
-        TypeNameAndCreate::from_type(self.db_type())
+    pub(crate) fn create_types_sql(&self) -> Vec<ObjectAndCreateSql> {
+        ObjectAndCreateSql::from_type(self.db_type())
+    }
+
+    pub(crate) fn create_index_sql(&self, table_name: &str) -> Option<ObjectAndCreateSql> {
+        self.index.map(|im| {
+            let idx = Index {
+                table_name: table_name.to_string(),
+                column_name: self.name.clone(),
+                method: im,
+            };
+            ObjectAndCreateSql::new(&self.name, idx.to_string())
+        })
     }
 }
 
@@ -108,6 +133,10 @@ impl Column {
 
     pub fn foreign_key(&self) -> Option<(String, String)> {
         self.foreign_key.clone()
+    }
+
+    pub fn get_index(&self) -> Option<IndexMethod> {
+        self.index
     }
 }
 
@@ -132,5 +161,52 @@ impl Display for Column {
             "{} {}{}{}{}{}",
             self.name, type_desc, nullable, unique, primary_key, foreign_key
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct Index {
+    table_name: String,
+    column_name: String,
+    method: IndexMethod,
+}
+
+impl Index {
+    fn generate_name(&self) -> String {
+        format!("{}_idx_{}", self.column_name, self.table_name)
+    }
+}
+
+impl Display for Index {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = self.generate_name();
+        write!(
+            f,
+            "CREATE INDEX IF NOT EXISTS {} ON {} USING {} ({})",
+            name, self.table_name, self.method, self.column_name
+        )
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum IndexMethod {
+    BTree,
+    Hash,
+}
+
+impl Default for IndexMethod {
+    fn default() -> Self {
+        Self::BTree
+    }
+}
+
+impl Display for IndexMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let desc = match self {
+            IndexMethod::BTree => "btree",
+            IndexMethod::Hash => "hash",
+        };
+        write!(f, "{}", desc)
     }
 }

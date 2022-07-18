@@ -11,11 +11,13 @@ pub trait PgTableExtension {
     fn create_types<T, const N: usize>(&mut self) -> Result<(), Error>
     where
         T: Table<N>;
+    fn create_indices<T, const N: usize>(&mut self) -> Result<(), Error>
+    where
+        T: Table<N>;
 
     fn insert_row<T, const N: usize>(&mut self, row: &T) -> Result<u64, Error>
     where
         T: Table<N>;
-
     fn insert_rows<T, const N: usize>(&mut self, rows: &[T]) -> Result<u64, Error>
     where
         T: Table<N>;
@@ -23,7 +25,6 @@ pub trait PgTableExtension {
     fn select_all<T, const N: usize>(&mut self) -> Result<Vec<T>, Error>
     where
         T: Table<N> + TryFrom<Row, Error = Error>;
-
     fn select<T, const N: usize>(
         &mut self,
         condition: impl Into<Option<String>>,
@@ -50,7 +51,9 @@ impl PgTableExtension for Client {
         info!("Creating the table {}...", T::name());
         let query = T::create_table_sql();
         debug!("CREATE for table {}: {}", T::name(), query);
-        self.batch_execute(&query)
+        self.batch_execute(&query)?;
+
+        self.create_indices::<T, N>()
     }
 
     fn create_types<T, const N: usize>(&mut self) -> Result<(), Error>
@@ -73,6 +76,32 @@ impl PgTableExtension for Client {
                 }
             }
             info!("Types for table {} created", T::name());
+        }
+        Ok(())
+    }
+
+    fn create_indices<T, const N: usize>(&mut self) -> Result<(), Error>
+    where
+        T: Table<N>,
+    {
+        let create_indices = T::create_indices_sql();
+
+        if create_indices.is_empty() {
+            debug!("Skip the indices for a table {:?}...", T::name());
+        } else {
+            info!("Creating the indices for a table {:?}...", T::name());
+            for idx_query in create_indices {
+                let col_name = idx_query.name();
+                info!(
+                    "Creating the index {:?} for a table {:?}...",
+                    col_name,
+                    T::name()
+                );
+                let sql = idx_query.create_sql();
+                debug!("Full index query: {:?}", sql);
+                self.execute(sql, &[])?;
+            }
+            info!("Indices for table {} created", T::name());
         }
         Ok(())
     }
