@@ -1,62 +1,61 @@
 use crate::table::Table;
 
+use async_trait::async_trait;
 use log::{debug, info};
-use postgres::{Client, Error, Row};
 use postgres_types::ToSql;
+use tokio_postgres::{Client, Error, Row};
 
+use super::ext::query_type_existence;
+
+#[async_trait]
 pub trait PgTableExtension {
-    fn create_table<T, const N: usize>(&mut self) -> Result<(), Error>
+    async fn create_table<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>;
-    fn create_types<T, const N: usize>(&mut self) -> Result<(), Error>
+    async fn create_types<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>;
-    fn create_indices<T, const N: usize>(&mut self) -> Result<(), Error>
-    where
-        T: Table<N>;
-
-    fn insert_row<T, const N: usize>(&mut self, row: &T) -> Result<u64, Error>
-    where
-        T: Table<N>;
-    fn insert_rows<T, const N: usize>(&mut self, rows: &[T]) -> Result<u64, Error>
+    async fn create_indices<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>;
 
-    fn select_all<T, const N: usize>(&mut self) -> Result<Vec<T>, Error>
+    async fn insert_row<T, const N: usize>(&self, row: &T) -> Result<u64, Error>
+    where
+        T: Table<N> + Sync;
+    async fn insert_rows<T, const N: usize>(&self, rows: &[T]) -> Result<u64, Error>
+    where
+        T: Table<N> + Sync;
+
+    async fn select_all<T, const N: usize>(&self) -> Result<Vec<T>, Error>
     where
         T: Table<N> + TryFrom<Row, Error = Error>;
-    fn select<T, const N: usize>(
-        &mut self,
-        condition: impl Into<Option<String>>,
+    async fn select<T, OptionStr, const N: usize>(
+        &self,
+        condition: OptionStr,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<T>, Error>
     where
-        T: Table<N> + TryFrom<Row, Error = Error>;
+        T: Table<N> + TryFrom<Row, Error = Error>,
+        OptionStr: Into<Option<String>> + Send;
 }
 
-pub(super) fn query_type_existence(type_name: &str) -> String {
-    format!(
-        "SELECT oid FROM pg_catalog.pg_type where typname = '{}'",
-        type_name
-    )
-}
-
+#[async_trait]
 impl PgTableExtension for Client {
-    fn create_table<T, const N: usize>(&mut self) -> Result<(), Error>
+    async fn create_table<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>,
     {
-        self.create_types::<T, N>()?;
+        self.create_types::<T, N>().await?;
 
         info!("Creating the table {}...", T::name());
         let query = T::create_table_sql();
         debug!("CREATE for table {}: {}", T::name(), query);
-        self.batch_execute(&query)?;
+        self.batch_execute(&query).await?;
 
-        self.create_indices::<T, N>()
+        self.create_indices::<T, N>().await
     }
 
-    fn create_types<T, const N: usize>(&mut self) -> Result<(), Error>
+    async fn create_types<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>,
     {
@@ -68,11 +67,11 @@ impl PgTableExtension for Client {
             info!("Creating the types for a table {:?}...", T::name());
             for ty_query in create_types {
                 let type_name = ty_query.name();
-                let res = self.query(&query_type_existence(type_name), &[])?;
+                let res = self.query(&query_type_existence(type_name), &[]).await?;
                 if res.is_empty() {
                     let sql = ty_query.create_sql();
                     info!("Not found type {:?}. Creating it with {:?}", type_name, sql);
-                    self.execute(sql, &[])?;
+                    self.execute(sql, &[]).await?;
                 }
             }
             info!("Types for table {} created", T::name());
@@ -80,7 +79,7 @@ impl PgTableExtension for Client {
         Ok(())
     }
 
-    fn create_indices<T, const N: usize>(&mut self) -> Result<(), Error>
+    async fn create_indices<T, const N: usize>(&self) -> Result<(), Error>
     where
         T: Table<N>,
     {
@@ -99,45 +98,46 @@ impl PgTableExtension for Client {
                 );
                 let sql = idx_query.create_sql();
                 debug!("Full index query: {:?}", sql);
-                self.execute(sql, &[])?;
+                self.execute(sql, &[]).await?;
             }
             info!("Indices for table {} created", T::name());
         }
         Ok(())
     }
 
-    fn insert_row<T, const N: usize>(&mut self, row: &T) -> Result<u64, Error>
+    async fn insert_row<T, const N: usize>(&self, row: &T) -> Result<u64, Error>
     where
-        T: Table<N>,
+        T: Table<N> + Sync,
     {
         let query = T::insert_sql();
-        self.execute(&query, &row.values())
+        self.execute(&query, &row.values()).await
     }
 
-    fn insert_rows<T, const N: usize>(&mut self, rows: &[T]) -> Result<u64, Error>
+    async fn insert_rows<T, const N: usize>(&self, rows: &[T]) -> Result<u64, Error>
     where
-        T: Table<N>,
+        T: Table<N> + Sync,
     {
         let query = T::insert_many_sql(rows.len());
         let params: Vec<_> = rows.iter().flat_map(|row| row.values()).collect();
-        self.execute(&query, &params)
+        self.execute(&query, &params).await
     }
 
-    fn select_all<T, const N: usize>(&mut self) -> Result<Vec<T>, Error>
+    async fn select_all<T, const N: usize>(&self) -> Result<Vec<T>, Error>
     where
         T: Table<N> + TryFrom<Row, Error = Error>,
     {
-        self.select(None, &[])
+        self.select(None, &[]).await
     }
 
     // TODO: make it lazy iterator
-    fn select<T, const N: usize>(
-        &mut self,
-        condition: impl Into<Option<String>>,
+    async fn select<T, OptionStr, const N: usize>(
+        &self,
+        condition: OptionStr,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<T>, Error>
     where
         T: Table<N> + TryFrom<Row, Error = Error>,
+        OptionStr: Into<Option<String>> + Send,
     {
         let name = T::name();
         let query = format!("SELECT * FROM {}", name);
@@ -147,7 +147,7 @@ impl PgTableExtension for Client {
             query
         };
 
-        let rows = self.query(&query, params)?;
+        let rows = self.query(&query, params).await?;
         rows.into_iter().map(T::try_from).collect()
     }
 }
@@ -183,10 +183,19 @@ mod tests {
         });
     }
 
-    fn get_client() -> Option<Client> {
+    async fn get_client() -> Option<Client> {
         setup();
         let db_url = std::env::var("DATABASE_URL").ok()?;
-        let client = Client::connect(&db_url, postgres::NoTls).unwrap();
+        let (client, connection) = tokio_postgres::connect(&db_url, postgres::NoTls)
+            .await
+            .unwrap();
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("connection error: {}", e);
+            }
+        });
+
         Some(client)
     }
 
@@ -207,10 +216,12 @@ mod tests {
             }
         }
 
-        fn drop_table() {
-            if let Some(mut client) = get_client() {
+        async fn drop_table() {
+            // TODO: make a `Drop` type to correctly remove all the artifacts from the DB on failure
+            if let Some(client) = get_client().await {
                 client
                     .execute(&format!("DROP TABLE {}", T::name()), &[])
+                    .await
                     .unwrap();
 
                 for ty in T::create_types_sql() {
@@ -219,6 +230,7 @@ mod tests {
                     // TODO: correctly remove complex types
                     client
                         .execute(&format!("DROP TYPE {}", type_name), &[])
+                        .await
                         .unwrap();
                 }
             }
@@ -229,31 +241,24 @@ mod tests {
     where
         T: Table<N> + PartialEq + std::fmt::Debug + TryFrom<Row, Error = Error> + Sync,
     {
-        fn run(&self, items: &[T]) {
-            if let Some(mut client) = get_client() {
-                client.create_table::<T, N>().unwrap();
+        async fn run(&self, items: &[T]) {
+            if let Some(client) = get_client().await {
+                client.create_table::<T, N>().await.unwrap();
 
                 let inserted = if items.is_empty() {
                     0
                 } else if items.len() == 1 {
-                    client.insert_row(&items[0]).unwrap()
+                    client.insert_row(&items[0]).await.unwrap()
                 } else {
-                    client.insert_rows(items).unwrap()
+                    client.insert_rows(items).await.unwrap()
                 };
                 assert_eq!(inserted as usize, items.len());
 
-                let from_db_items: Vec<T> = client.select_all().unwrap();
+                let from_db_items: Vec<T> = client.select_all().await.unwrap();
                 assert_eq!(from_db_items, items);
             }
-        }
-    }
 
-    impl<T, const N: usize> Drop for Roundtrip<T, N>
-    where
-        T: Table<N>,
-    {
-        fn drop(&mut self) {
-            Self::drop_table();
+            Self::drop_table().await;
         }
     }
 
@@ -345,8 +350,8 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insert_single() {
+        #[tokio::test]
+        async fn insert_single() {
             let user_id = Uuid::new_v4();
             let b = Buy {
                 buy_id: Uuid::new_v4(),
@@ -356,18 +361,20 @@ mod tests {
                 details: None,
             };
 
-            if let Some(mut client) = get_client() {
-                client.create_table::<User, 1>().unwrap();
-                client.insert_row(&User { user_id }).unwrap();
-                Roundtrip::<_, 5>::new().run(&[b]);
+            if let Some(client) = get_client().await {
+                client.create_table::<User, 1>().await.unwrap();
+                client.insert_row(&User { user_id }).await.unwrap();
+
+                Roundtrip::<_, 5>::new().run(&[b]).await;
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .await
                     .unwrap();
             }
         }
 
-        #[test]
-        fn insert_with_all_values() {
+        #[tokio::test]
+        async fn insert_with_all_values() {
             let user_id = Uuid::new_v4();
             let b = Buy {
                 buy_id: Uuid::new_v4(),
@@ -377,18 +384,19 @@ mod tests {
                 details: Some("the delivery should be performed".into()),
             };
 
-            if let Some(mut client) = get_client() {
-                client.create_table::<User, 1>().unwrap();
-                client.insert_row(&User { user_id }).unwrap();
-                Roundtrip::<_, 5>::new().run(&[b]);
+            if let Some(client) = get_client().await {
+                client.create_table::<User, 1>().await.unwrap();
+                client.insert_row(&User { user_id }).await.unwrap();
+                Roundtrip::<_, 5>::new().run(&[b]).await;
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .await
                     .unwrap();
             }
         }
 
-        #[test]
-        fn insert_both() {
+        #[tokio::test]
+        async fn insert_both() {
             let user_id = Uuid::new_v4();
             let buys = vec![
                 Buy {
@@ -407,12 +415,13 @@ mod tests {
                 },
             ];
 
-            if let Some(mut client) = get_client() {
-                client.create_table::<User, 1>().unwrap();
-                client.insert_row(&User { user_id }).unwrap();
-                Roundtrip::<_, 5>::new().run(&buys);
+            if let Some(client) = get_client().await {
+                client.create_table::<User, 1>().await.unwrap();
+                client.insert_row(&User { user_id }).await.unwrap();
+                Roundtrip::<_, 5>::new().run(&buys).await;
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .await
                     .unwrap();
             }
         }
@@ -471,30 +480,30 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insert_simple() {
+        #[tokio::test]
+        async fn insert_simple() {
             let im = Image {
                 point_top_left: Point { x: 5, y: 8 },
                 point_bottom_right: Point { x: 215, y: 160 },
                 center: None,
             };
 
-            Roundtrip::<_, 3>::new().run(&[im]);
+            Roundtrip::<_, 3>::new().run(&[im]).await;
         }
 
-        #[test]
-        fn insert_with_center() {
+        #[tokio::test]
+        async fn insert_with_center() {
             let im = Image {
                 point_top_left: Point { x: 5, y: 8 },
                 point_bottom_right: Point { x: 215, y: 160 },
                 center: Some(Point { x: 100, y: 80 }),
             };
 
-            Roundtrip::<_, 3>::new().run(&[im]);
+            Roundtrip::<_, 3>::new().run(&[im]).await;
         }
 
-        #[test]
-        fn insert_both() {
+        #[tokio::test]
+        async fn insert_both() {
             let images = vec![
                 Image {
                     point_top_left: Point { x: 5, y: 8 },
@@ -508,7 +517,7 @@ mod tests {
                 },
             ];
 
-            Roundtrip::<_, 3>::new().run(&images);
+            Roundtrip::<_, 3>::new().run(&images).await;
         }
     }
 
@@ -556,8 +565,8 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insert_simple() {
+        #[tokio::test]
+        async fn insert_simple() {
             let x = SingleValuedTable {
                 val: IntWithLabel {
                     val: 0,
@@ -565,7 +574,7 @@ mod tests {
                 },
             };
 
-            Roundtrip::new().run(&[x]);
+            Roundtrip::new().run(&[x]).await;
         }
     }
 
@@ -615,8 +624,8 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insert() {
+        #[tokio::test]
+        async fn insert() {
             let fig = Figure {
                 name: "trapezoid".into(),
                 polygon: vec![
@@ -627,7 +636,7 @@ mod tests {
                 ],
             };
 
-            Roundtrip::new().run(&[fig]);
+            Roundtrip::<_, 2>::new().run(&[fig]).await;
         }
     }
 }
