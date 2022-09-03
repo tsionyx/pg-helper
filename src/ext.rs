@@ -164,7 +164,7 @@ impl PgTableExtension for Client {
 /// ```
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
+    use std::{marker::PhantomData, sync::Once};
 
     use super::*;
     use crate::{Column, ColumnBuilder};
@@ -177,7 +177,9 @@ mod tests {
     /// Setup function that is only run once, even if called multiple times.
     fn setup() {
         INIT.call_once(|| {
-            env_logger::init();
+            if let Err(err) = env_logger::try_init() {
+                info!("logger probably initialized before: {}", err);
+            }
         });
     }
 
@@ -188,38 +190,70 @@ mod tests {
         Some(client)
     }
 
-    fn roundtrip<T, const N: usize>(items: &[T])
+    struct Roundtrip<T, const N: usize>
     where
-        T: Table<N> + PartialEq + std::fmt::Debug + TryFrom<Row, Error = Error>,
+        T: Table<N>,
     {
-        if let Some(mut client) = get_client() {
-            client.create_table::<T, N>().unwrap();
+        _phantom: PhantomData<T>,
+    }
 
-            let inserted = if items.is_empty() {
-                0
-            } else if items.len() == 1 {
-                client.insert_row(&items[0]).unwrap()
-            } else {
-                client.insert_rows(items).unwrap()
-            };
-            assert_eq!(inserted as usize, items.len());
-
-            let from_db_items: Vec<T> = client.select_all().unwrap();
-            assert_eq!(from_db_items, items);
-
-            // TODO: make a `Drop` type to correctly remove all the artifacts from the DB
-            client
-                .execute(&format!("DROP TABLE {}", T::name()), &[])
-                .unwrap();
-
-            for ty in T::create_types_sql() {
-                let type_name = ty.name();
-
-                // TODO: correctly remove complex types
-                client
-                    .execute(&format!("DROP TYPE {}", type_name), &[])
-                    .unwrap();
+    impl<T, const N: usize> Roundtrip<T, N>
+    where
+        T: Table<N>,
+    {
+        fn new() -> Self {
+            Self {
+                _phantom: PhantomData,
             }
+        }
+
+        fn drop_table() {
+            if let Some(mut client) = get_client() {
+                client
+                    .execute(&format!("DROP TABLE {}", T::name()), &[])
+                    .unwrap();
+
+                for ty in T::create_types_sql() {
+                    let type_name = ty.name();
+
+                    // TODO: correctly remove complex types
+                    client
+                        .execute(&format!("DROP TYPE {}", type_name), &[])
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    impl<T, const N: usize> Roundtrip<T, N>
+    where
+        T: Table<N> + PartialEq + std::fmt::Debug + TryFrom<Row, Error = Error> + Sync,
+    {
+        fn run(&self, items: &[T]) {
+            if let Some(mut client) = get_client() {
+                client.create_table::<T, N>().unwrap();
+
+                let inserted = if items.is_empty() {
+                    0
+                } else if items.len() == 1 {
+                    client.insert_row(&items[0]).unwrap()
+                } else {
+                    client.insert_rows(items).unwrap()
+                };
+                assert_eq!(inserted as usize, items.len());
+
+                let from_db_items: Vec<T> = client.select_all().unwrap();
+                assert_eq!(from_db_items, items);
+            }
+        }
+    }
+
+    impl<T, const N: usize> Drop for Roundtrip<T, N>
+    where
+        T: Table<N>,
+    {
+        fn drop(&mut self) {
+            Self::drop_table();
         }
     }
 
@@ -325,7 +359,7 @@ mod tests {
             if let Some(mut client) = get_client() {
                 client.create_table::<User, 1>().unwrap();
                 client.insert_row(&User { user_id }).unwrap();
-                roundtrip::<_, 5>(&[b]);
+                Roundtrip::<_, 5>::new().run(&[b]);
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
                     .unwrap();
@@ -346,7 +380,7 @@ mod tests {
             if let Some(mut client) = get_client() {
                 client.create_table::<User, 1>().unwrap();
                 client.insert_row(&User { user_id }).unwrap();
-                roundtrip::<_, 5>(&[b]);
+                Roundtrip::<_, 5>::new().run(&[b]);
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
                     .unwrap();
@@ -376,7 +410,7 @@ mod tests {
             if let Some(mut client) = get_client() {
                 client.create_table::<User, 1>().unwrap();
                 client.insert_row(&User { user_id }).unwrap();
-                roundtrip::<_, 5>(&buys);
+                Roundtrip::<_, 5>::new().run(&buys);
                 client
                     .execute(&format!("DROP TABLE {}", User::name()), &[])
                     .unwrap();
@@ -445,7 +479,7 @@ mod tests {
                 center: None,
             };
 
-            roundtrip::<_, 3>(&[im]);
+            Roundtrip::<_, 3>::new().run(&[im]);
         }
 
         #[test]
@@ -456,7 +490,7 @@ mod tests {
                 center: Some(Point { x: 100, y: 80 }),
             };
 
-            roundtrip::<_, 3>(&[im]);
+            Roundtrip::<_, 3>::new().run(&[im]);
         }
 
         #[test]
@@ -474,7 +508,7 @@ mod tests {
                 },
             ];
 
-            roundtrip::<_, 3>(&images);
+            Roundtrip::<_, 3>::new().run(&images);
         }
     }
 
@@ -531,7 +565,7 @@ mod tests {
                 },
             };
 
-            roundtrip(&[x]);
+            Roundtrip::new().run(&[x]);
         }
     }
 
@@ -593,7 +627,7 @@ mod tests {
                 ],
             };
 
-            roundtrip::<_, 2>(&[fig]);
+            Roundtrip::new().run(&[fig]);
         }
     }
 }
