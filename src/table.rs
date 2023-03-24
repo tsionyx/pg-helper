@@ -3,14 +3,14 @@ use std::fmt::Write as _;
 use itertools::Itertools as _;
 use postgres_types::ToSql;
 
-use crate::{column::Column, constraint::CheckConstraint, type_helpers::ObjectAndCreateSql};
+use crate::{column::Column, constraint::Constraint, type_helpers::ObjectAndCreateSql};
 
 pub trait Table<const N: usize> {
     fn name() -> &'static str;
 
     fn columns() -> [Column; N];
 
-    fn constraints() -> Option<Vec<CheckConstraint>> {
+    fn constraints() -> Option<Vec<Box<dyn Constraint>>> {
         None
     }
 
@@ -34,7 +34,10 @@ pub trait Table<const N: usize> {
         let mut query = columns;
 
         if let Some(constraints) = Self::constraints() {
-            let constraints = constraints.iter().map(CheckConstraint::to_string).join(",");
+            let constraints = constraints
+                .iter()
+                .map(|constraint| constraint.as_sql())
+                .join(", ");
             if !constraints.is_empty() {
                 write!(query, ", {}", constraints).unwrap();
             }
@@ -335,6 +338,57 @@ mod tests {
             assert_eq!(
                 SingleValuedTable::insert_sql(),
                 "INSERT INTO tbl (val) VALUES ($1);"
+            );
+        }
+    }
+
+    mod with_constraints {
+        use super::*;
+        use crate::{CheckConstraint, UniqueConstraint};
+
+        struct ConstrainedTable {
+            key1: i16,
+            key2: i16,
+            label: i16,
+        }
+
+        impl Table<3> for ConstrainedTable {
+            fn name() -> &'static str {
+                "constrained"
+            }
+
+            fn columns() -> [Column; 3] {
+                [
+                    Column::new("key1", Type::INT2),
+                    Column::new("key2", Type::INT2),
+                    Column::new("label", Type::INT2),
+                ]
+            }
+
+            fn constraints() -> Option<Vec<Box<dyn Constraint>>> {
+                let cols = Self::columns();
+                Some(vec![
+                    Box::new(UniqueConstraint::new("combined_key", &[&cols[0], &cols[1]])),
+                    Box::new(CheckConstraint::new("label_percent", "label <= 100")),
+                ])
+            }
+
+            fn values(&self) -> [&(dyn ToSql + Sync); 3] {
+                [&self.key1, &self.key2, &self.label]
+            }
+        }
+
+        #[test]
+        fn create_table() {
+            assert_eq!(
+                ConstrainedTable::create_table_sql(),
+                "CREATE TABLE IF NOT EXISTS constrained (\
+                key1 int2 NOT NULL, \
+                key2 int2 NOT NULL, \
+                label int2 NOT NULL, \
+                CONSTRAINT combined_key UNIQUE (key1, key2), \
+                CONSTRAINT label_percent CHECK (label <= 100)\
+            );"
             );
         }
     }
