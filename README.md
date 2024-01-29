@@ -5,9 +5,11 @@ INSERT-ing and SELECT-ing the rows as instances of `Table` trait:
 
 
 ```rust
-use pg_helper::{array_type, struct_type, Column, ColumnBuilder, PgTableExtension, Table};
-use postgres::{types::{FromSql, ToSql, Type}, Client, Error, Row};
-
+use pg_helper::{array_type, gen_table, struct_type, PgTableExtension};
+use postgres::{
+    types::{FromSql, ToSql, Type},
+    Client,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, ToSql, FromSql)]
 #[postgres(name = "point2d")]
@@ -16,39 +18,13 @@ struct Point {
     y: i16,
 }
 
-#[derive(Debug, PartialEq)]
-struct Figure {
-    name: String,
-    polygon: Vec<Point>,
-}
-
-impl Table<2> for Figure {
-    fn name() -> &'static str {
-        "figures"
+gen_table!(
+    #[derive(Debug, PartialEq)]
+    struct Figure("figures") {
+        name: String = Type::VARCHAR; [index()],
+        polygon: Vec<Point> = array_type(struct_type("point2d", &[("x", Type::INT2), ("y", Type::INT2)])),
     }
-
-    fn columns() -> [Column; 2] {
-        let point_type = struct_type("point2d", &[("x", Type::INT2), ("y", Type::INT2)]);
-        [
-            ColumnBuilder::new("name", Type::VARCHAR).index().finish(),
-            Column::new("polygon", array_type(point_type)),
-        ]
-    }
-
-    fn values(&self) -> [&(dyn ToSql + Sync); 2] {
-        [&self.name, &self.polygon]
-    }
-}
-
-impl TryFrom<Row> for Figure {
-    type Error = Error;
-
-    fn try_from(value: Row) -> Result<Self, Self::Error> {
-        let name = value.try_get("name")?;
-        let polygon = value.try_get("polygon")?;
-        Ok(Self { name, polygon })
-    }
-}
+);
 
 fn main() {
     let db_url = std::env::var("DATABASE_URL").unwrap();

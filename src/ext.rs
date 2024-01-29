@@ -418,6 +418,100 @@ mod tests {
         }
     }
 
+    mod simple_table_with_macro_ {
+        use super::*;
+
+        crate::gen_table! {
+            #[derive(Debug, PartialEq)]
+            struct User("users") {
+                user_id: Uuid = Type::UUID; [primary_key()],
+            }
+        }
+
+        crate::gen_table! {
+            #[derive(Debug, PartialEq)]
+            struct Buy("buys") {
+                buy_id: Uuid = Type::UUID; [primary_key()],
+                customer_id: Uuid = Type::UUID; [foreign_key("users", "user_id")],
+                has_discount: Option<bool> = Type::BOOL; [nullable()],
+                total_price: Option<f32> = Type::FLOAT4; [nullable()],
+                details: Option<String> = Type::VARCHAR; [nullable()],
+            }
+        }
+
+        #[test]
+        fn insert_single() {
+            let user_id = Uuid::new_v4();
+            let b = Buy {
+                buy_id: Uuid::new_v4(),
+                customer_id: user_id,
+                has_discount: None,
+                total_price: Some(14.56),
+                details: None,
+            };
+
+            if let Some(mut client) = get_client() {
+                client.create_table::<User, 1>().unwrap();
+                client.insert_row(&User { user_id }).unwrap();
+                Roundtrip::<_, 5>::new().run(&[b]);
+                client
+                    .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .unwrap();
+            }
+        }
+
+        #[test]
+        fn insert_with_all_values() {
+            let user_id = Uuid::new_v4();
+            let b = Buy {
+                buy_id: Uuid::new_v4(),
+                customer_id: user_id,
+                has_discount: Some(true),
+                total_price: Some(18899.9),
+                details: Some("the delivery should be performed".into()),
+            };
+
+            if let Some(mut client) = get_client() {
+                client.create_table::<User, 1>().unwrap();
+                client.insert_row(&User { user_id }).unwrap();
+                Roundtrip::<_, 5>::new().run(&[b]);
+                client
+                    .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .unwrap();
+            }
+        }
+
+        #[test]
+        fn insert_both() {
+            let user_id = Uuid::new_v4();
+            let buys = vec![
+                Buy {
+                    buy_id: Uuid::new_v4(),
+                    customer_id: user_id,
+                    has_discount: None,
+                    total_price: Some(14.56),
+                    details: None,
+                },
+                Buy {
+                    buy_id: Uuid::new_v4(),
+                    customer_id: user_id,
+                    has_discount: Some(true),
+                    total_price: Some(18899.9),
+                    details: Some("the delivery should be performed".into()),
+                },
+            ];
+
+            if let Some(mut client) = get_client() {
+                client.create_table::<User, 1>().unwrap();
+                client.insert_row(&User { user_id }).unwrap();
+                Roundtrip::<_, 5>::new().run(&buys);
+                client
+                    .execute(&format!("DROP TABLE {}", User::name()), &[])
+                    .unwrap();
+            }
+        }
+    }
+
     mod table_with_complex_fields {
         use super::*;
         use crate::struct_type;

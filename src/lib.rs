@@ -2,6 +2,7 @@ mod column;
 mod constraint;
 mod ext;
 mod ext_async;
+mod macros;
 mod table;
 mod type_helpers;
 
