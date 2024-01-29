@@ -301,7 +301,7 @@ mod tests {
                         .primary_key()
                         .finish(),
                     ColumnBuilder::new("customer_id", Type::UUID)
-                        .foreign_key("users", "user_id")
+                        .foreign_key(User::name(), "user_id")
                         .finish(),
                     ColumnBuilder::new("has_discount", Type::BOOL)
                         .nullable()
@@ -432,7 +432,7 @@ mod tests {
             #[derive(Debug, PartialEq)]
             struct Buy("buys") {
                 buy_id: Uuid = Type::UUID; [primary_key()],
-                customer_id: Uuid = Type::UUID; [foreign_key("users", "user_id")],
+                customer_id: Uuid = Type::UUID; [foreign_key(User::name(), "user_id")],
                 has_discount: Option<bool> = Type::BOOL; [nullable()],
                 total_price: Option<f32> = Type::FLOAT4; [nullable()],
                 details: Option<String> = Type::VARCHAR; [nullable()],

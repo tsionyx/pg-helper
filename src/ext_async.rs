@@ -306,7 +306,7 @@ mod tests {
                         .primary_key()
                         .finish(),
                     ColumnBuilder::new("customer_id", Type::UUID)
-                        .foreign_key("users", "user_id")
+                        .foreign_key(User::name(), "user_id")
                         .finish(),
                     ColumnBuilder::new("has_discount", Type::BOOL)
                         .nullable()
