@@ -344,39 +344,19 @@ mod tests {
 
     mod with_constraints {
         use super::*;
-        use crate::{CheckConstraint, UniqueConstraint};
+        use crate::{gen_table, CheckConstraint, UniqueConstraint};
 
-        struct ConstrainedTable {
-            key1: i16,
-            key2: i16,
-            label: i16,
-        }
-
-        impl Table<3> for ConstrainedTable {
-            fn name() -> &'static str {
-                "constrained"
-            }
-
-            fn columns() -> [Column; 3] {
-                [
-                    Column::new("key1", Type::INT2),
-                    Column::new("key2", Type::INT2),
-                    Column::new("label", Type::INT2),
+        gen_table!(
+            struct ConstrainedTable("constrained") {
+                key1: i16 = Type::INT2,
+                key2: i16 = Type::INT2,
+                label: i16 = Type::INT2,
+                => constraints = [
+                    UniqueConstraint::new("combined_key", &[&Self::columns()[0], &Self::columns()[1]]),
+                    CheckConstraint::new("label_percent", "label <= 100"),
                 ]
             }
-
-            fn constraints() -> Option<Vec<Box<dyn Constraint>>> {
-                let cols = Self::columns();
-                Some(vec![
-                    Box::new(UniqueConstraint::new("combined_key", &[&cols[0], &cols[1]])),
-                    Box::new(CheckConstraint::new("label_percent", "label <= 100")),
-                ])
-            }
-
-            fn values(&self) -> [&(dyn ToSql + Sync); 3] {
-                [&self.key1, &self.key2, &self.label]
-            }
-        }
+        );
 
         #[test]
         fn create_table() {

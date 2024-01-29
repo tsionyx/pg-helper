@@ -13,6 +13,7 @@ macro_rules! gen_table {
                 $(#[$inner:ident $($args:tt)*])*
                 $field:ident: $field_ty:ty = $sql_ty:expr $(;[$($prop:ident($($prop_arg:expr),*)),+ $(,)?])?
             ),+ $(,)?
+            $(=> constraints = [$($constraint:expr),+ $(,)?])?
         }
     ) => {
         $(#[$outer])*
@@ -39,6 +40,14 @@ macro_rules! gen_table {
                     )+
                 ]
             }
+
+            $(
+                fn constraints() -> Option<Vec<Box<dyn $crate::Constraint>>> {
+                    Some(vec![
+                        $(Box::new($constraint)),+
+                    ])
+                }
+            )?
 
             fn values(&self) -> [&(dyn postgres_types::ToSql + Sync); $crate::count!($($field)+)] {
                 [$(&self.$field,)+]
