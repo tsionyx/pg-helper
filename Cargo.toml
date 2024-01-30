@@ -9,6 +9,7 @@ description = "Help to build PostgreSQL communication without complex ORM"
 [dependencies]
 itertools = "0.10"
 postgres-types = { version = "0.2", features = ["derive"] }
+postgres-protocol = "0.6"
 log = "0.4"
 postgres = "0.19"
 tokio-postgres = "0.7"
