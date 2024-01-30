@@ -84,6 +84,19 @@ pub fn struct_type(name: impl AsRef<str>, fields: &[(impl AsRef<str>, Type)]) ->
     )
 }
 
+pub fn enum_type(name: impl AsRef<str>, variants: &[impl AsRef<str>]) -> Type {
+    let variants = variants
+        .iter()
+        .map(|name| name.as_ref().to_owned())
+        .collect();
+    Type::new(
+        name.as_ref().to_owned(),
+        0,
+        Kind::Enum(variants),
+        "public".into(),
+    )
+}
+
 pub fn array_type(of: Type) -> Type {
     let plural = format!("{}s", of.name());
     Type::new(plural, 0, Kind::Array(of), "public".into())

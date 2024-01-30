@@ -12,5 +12,5 @@ pub use self::{
     ext::PgTableExtension,
     ext_async::PgTableExtension as PgTableAsync,
     table::Table,
-    type_helpers::{array_type, struct_type},
+    type_helpers::{array_type, enum_type, struct_type},
 };
