@@ -67,3 +67,75 @@ macro_rules! gen_table {
         }
     };
 }
+
+#[macro_export]
+macro_rules! primary_key_with_indices {
+    ($name:expr => [$($idx:literal),+ $(,)?]) => {
+         $crate::primary_key_with_indices!($name => Self[$($idx),+])
+    };
+    ($name:expr => $table:ident [$($idx:literal),+ $(,)?]) => {
+         $crate::PrimaryKeyConstraint::new($name, &[$(&$table::columns()[$idx]),+])
+    };
+}
+
+#[macro_export]
+macro_rules! foreign_key_with_indices {
+    ($name:expr => $dst_table:ident [$($src_idx:literal => $dst_idx:literal),+ $(,)?]) => {
+         $crate::foreign_key_with_indices!($name => (Self => $dst_table) [$($src_idx => $dst_idx),+])
+    };
+    ($name:expr => ($src_table:ident => $dst_table:ident) [$($src_idx:literal => $dst_idx:literal),+ $(,)?]) => {
+         $crate::ForeignKeyConstraint::new($name, $dst_table::name(),
+            &[$( (&$src_table::columns()[$src_idx], &$dst_table::columns()[$dst_idx]) ),+])
+    };
+}
+
+#[macro_export]
+macro_rules! unique_with_indices {
+    ($name:expr => [$($idx:literal),+ $(,)?]) => {
+         $crate::unique_with_indices!($name => Self[$($idx),+])
+    };
+    ($name:expr => $table:ident [$($idx:literal),+ $(,)?]) => {
+         $crate::UniqueConstraint::new($name, &[$(&$table::columns()[$idx]),+])
+    };
+}
+
+#[test]
+fn constraints_are_compiled() {
+    use crate::Table as _;
+
+    gen_table!(
+        pub struct Bar("bar") {
+            x: i16 = postgres::types::Type::INT2,
+            y: i16 = postgres::types::Type::INT2,
+            z: i16 = postgres::types::Type::INT2,
+            => constraints = [
+                primary_key_with_indices!("pk" => [0]),
+            ]
+        }
+    );
+    assert_eq!(
+        Bar::create_table_sql(),
+        "CREATE TABLE IF NOT EXISTS bar \
+               (x int2 NOT NULL, y int2 NOT NULL, z int2 NOT NULL, \
+               CONSTRAINT pk PRIMARY KEY (x));"
+    );
+
+    gen_table!(
+        pub struct Foo("foo") {
+            x: i16 = postgres::types::Type::INT2,
+            y: i16 = postgres::types::Type::INT2,
+            => constraints = [
+                primary_key_with_indices!("pk" => [0]),
+                foreign_key_with_indices!("fk" => Bar [0=>1, 1=>2]),
+            ]
+        }
+    );
+
+    assert_eq!(
+        Foo::create_table_sql(),
+        "CREATE TABLE IF NOT EXISTS foo \
+               (x int2 NOT NULL, y int2 NOT NULL, \
+               CONSTRAINT pk PRIMARY KEY (x), \
+               CONSTRAINT fk FOREIGN KEY (x, y) REFERENCES bar (y, z));"
+    );
+}

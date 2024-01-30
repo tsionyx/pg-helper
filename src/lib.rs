@@ -8,7 +8,9 @@ mod type_helpers;
 
 pub use self::{
     column::{Column, ColumnBuilder, IndexMethod},
-    constraint::{CheckConstraint, Constraint, UniqueConstraint},
+    constraint::{
+        CheckConstraint, Constraint, ForeignKeyConstraint, PrimaryKeyConstraint, UniqueConstraint,
+    },
     ext::PgTableExtension,
     ext_async::PgTableExtension as PgTableAsync,
     table::Table,
