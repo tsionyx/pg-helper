@@ -1,4 +1,4 @@
-use crate::table::Table;
+use crate::table::{InsertableValues, Table};
 
 use log::{debug, info};
 use postgres::{Client, Error, Row};
@@ -17,10 +17,10 @@ pub trait PgTableExtension {
 
     fn insert_row<T, const N: usize>(&mut self, row: &T) -> Result<u64, Error>
     where
-        T: Table<N>;
+        T: InsertableValues<N>;
     fn insert_rows<T, const N: usize>(&mut self, rows: &[T]) -> Result<u64, Error>
     where
-        T: Table<N>;
+        T: InsertableValues<N>;
 
     fn select_all<T, const N: usize>(&mut self) -> Result<Vec<T>, Error>
     where
@@ -108,7 +108,7 @@ impl PgTableExtension for Client {
 
     fn insert_row<T, const N: usize>(&mut self, row: &T) -> Result<u64, Error>
     where
-        T: Table<N>,
+        T: InsertableValues<N>,
     {
         let query = T::insert_sql();
         self.execute(&query, &row.values())
@@ -116,7 +116,7 @@ impl PgTableExtension for Client {
 
     fn insert_rows<T, const N: usize>(&mut self, rows: &[T]) -> Result<u64, Error>
     where
-        T: Table<N>,
+        T: InsertableValues<N>,
     {
         let query = T::insert_many_sql(rows.len());
         let params: Vec<_> = rows.iter().flat_map(|row| row.values()).collect();
@@ -227,7 +227,12 @@ mod tests {
 
     impl<T, const N: usize> Roundtrip<T, N>
     where
-        T: Table<N> + PartialEq + std::fmt::Debug + TryFrom<Row, Error = Error> + Sync,
+        T: Table<N>
+            + InsertableValues<N>
+            + PartialEq
+            + std::fmt::Debug
+            + TryFrom<Row, Error = Error>
+            + Sync,
     {
         fn run(&self, items: &[T]) {
             if let Some(mut client) = get_client() {
@@ -275,7 +280,9 @@ mod tests {
                     .primary_key()
                     .finish()]
             }
+        }
 
+        impl InsertableValues<1> for User {
             fn values(&self) -> [&(dyn ToSql + Sync); 1] {
                 [&self.user_id]
             }
@@ -314,7 +321,9 @@ mod tests {
                         .finish(),
                 ]
             }
+        }
 
+        impl InsertableValues<5> for Buy {
             fn values(&self) -> [&(dyn ToSql + Sync); 5] {
                 [
                     &self.buy_id,
@@ -544,7 +553,8 @@ mod tests {
                     ColumnBuilder::new("center", point_type).nullable().finish(),
                 ]
             }
-
+        }
+        impl InsertableValues<3> for Image {
             fn values(&self) -> [&(dyn ToSql + Sync); 3] {
                 [&self.point_top_left, &self.point_bottom_right, &self.center]
             }
@@ -635,7 +645,8 @@ mod tests {
                 );
                 [Column::new("val", int_with_label_type)]
             }
-
+        }
+        impl InsertableValues<1> for SingleValuedTable {
             fn values(&self) -> [&(dyn ToSql + Sync); 1] {
                 [&self.val]
             }
@@ -693,7 +704,9 @@ mod tests {
                     Column::new("polygon", array_type(point_type)),
                 ]
             }
+        }
 
+        impl InsertableValues<2> for Figure {
             fn values(&self) -> [&(dyn ToSql + Sync); 2] {
                 [&self.name, &self.polygon]
             }

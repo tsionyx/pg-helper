@@ -45,13 +45,20 @@ pub trait Table<const N: usize> {
 
         format!("CREATE TABLE IF NOT EXISTS {} ({});", Self::name(), query)
     }
+}
 
-    fn values(&self) -> [&(dyn ToSql + Sync); N];
-
+pub trait Insertable<const N: usize> {
     fn insert_sql() -> String {
         Self::insert_many_sql(1)
     }
 
+    fn insert_many_sql(rows_number: usize) -> String;
+}
+
+impl<T, const N: usize> Insertable<N> for T
+where
+    T: Table<N>,
+{
     fn insert_many_sql(rows_number: usize) -> String {
         if rows_number == 0 {
             return String::new();
@@ -76,6 +83,10 @@ pub trait Table<const N: usize> {
             placeholder_values,
         )
     }
+}
+
+pub trait InsertableValues<const N: usize>: Insertable<N> {
+    fn values(&self) -> [&(dyn ToSql + Sync); N];
 }
 
 #[cfg(test)]
@@ -121,7 +132,9 @@ mod tests {
                         .finish(),
                 ]
             }
+        }
 
+        impl InsertableValues<5> for Buy {
             fn values(&self) -> [&(dyn ToSql + Sync); 5] {
                 [
                     &self.buy_id,
@@ -218,7 +231,9 @@ mod tests {
                     ColumnBuilder::new("center", point_type).nullable().finish(),
                 ]
             }
+        }
 
+        impl InsertableValues<3> for Image {
             fn values(&self) -> [&(dyn ToSql + Sync); 3] {
                 [&self.point_top_left, &self.point_bottom_right, &self.center]
             }
@@ -306,7 +321,9 @@ mod tests {
                 );
                 [Column::new("val", int_with_label_type)]
             }
+        }
 
+        impl InsertableValues<1> for SingleValuedTable {
             fn values(&self) -> [&(dyn ToSql + Sync); 1] {
                 [&self.val]
             }

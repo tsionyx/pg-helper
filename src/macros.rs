@@ -48,7 +48,9 @@ macro_rules! gen_table {
                     ])
                 }
             )?
+        }
 
+        impl $crate::InsertableValues< {$crate::count!($($field)+)} > for $TableName {
             fn values(&self) -> [&(dyn postgres_types::ToSql + Sync); $crate::count!($($field)+)] {
                 [$(&self.$field,)+]
             }

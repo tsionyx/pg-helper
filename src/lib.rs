@@ -15,6 +15,6 @@ pub use self::{
     ext::PgTableExtension,
     ext_async::PgTableExtension as PgTableAsync,
     serial::Serial,
-    table::Table,
+    table::{Insertable, InsertableValues, Table},
     type_helpers::{array_type, enum_type, struct_type},
 };
