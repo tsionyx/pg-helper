@@ -98,6 +98,6 @@ pub fn enum_type(name: impl AsRef<str>, variants: &[impl AsRef<str>]) -> Type {
 }
 
 pub fn array_type(of: Type) -> Type {
-    let plural = format!("{}s", of.name());
+    let plural = format!("{}[]", of.name());
     Type::new(plural, 0, Kind::Array(of), "public".into())
 }
