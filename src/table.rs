@@ -176,7 +176,7 @@ mod tests {
 
         #[test]
         fn insert_both() {
-            let buys = vec![
+            let buys = [
                 Buy {
                     buy_id: Uuid::new_v4(),
                     customer_id: Uuid::new_v4(),
@@ -273,7 +273,7 @@ mod tests {
 
         #[test]
         fn insert_both() {
-            let images = vec![
+            let images = [
                 Image {
                     point_top_left: Point { x: 5, y: 8 },
                     point_bottom_right: Point { x: 215, y: 160 },
